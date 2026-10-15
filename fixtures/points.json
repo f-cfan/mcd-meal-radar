@@ -1,0 +1,12 @@
+{
+  "_source": "麦当劳官方 MCP · query-my-account",
+  "_captured_at": "2026-10-12 22:03:10",
+  "_note": "即将过期积分是本项目「券/积分过期提醒」功能的数据源之一。",
+  "success": true, "code": 200,
+  "data": {
+    "available": 4820,
+    "accumulated": 12650,
+    "frozen": 0,
+    "expiringSoon": 350
+  }
+}

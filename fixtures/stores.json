@@ -1,0 +1,13 @@
+{
+  "_source": "麦当劳官方 MCP · delivery-query-stores + query-nearby-stores",
+  "_captured_at": "2026-10-12 22:00:55",
+  "_note": "distance 为公里；delivery 可配送为 true 表示该地址覆盖。库存字段官方未开放，故本项目不展示库存，只展示门店可用性。",
+  "success": true, "code": 200,
+  "data": {
+    "stores": [
+      { "storeCode": "1990622", "name": "麦当劳南京东城汇餐厅", "distance": 1.2, "address": "南京市秦淮区某路 12 号", "delivery": true,  "hasParty": true },
+      { "storeCode": "1991888", "name": "麦当劳南京万达广场餐厅", "distance": 2.5, "address": "南京市建邺区某路 88 号", "delivery": true, "hasParty": false },
+      { "storeCode": "1992456", "name": "麦当劳南京江宁开发区餐厅", "distance": 6.8, "address": "南京市江宁区某路 6 号", "delivery": false, "hasParty": false }
+    ]
+  }
+}

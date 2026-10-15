@@ -1,0 +1,49 @@
+{
+  "_source": "麦当劳官方 MCP · query-meals",
+  "_captured_at": "2026-10-12 21:59:29",
+  "_store": "1990622 麦当劳南京东城汇餐厅 · 麦乐送外送 orderType=2",
+  "_unit_warning": "query-meals 返回单位为「元（字符串）」，与 calculate-price 的「分」不同，见 mcd_adapter.parse_meals",
+  "_note": "真实响应节选。完整菜单有 100+ 项，此处保留演示所需的 8 项，字段与取值未改动。",
+  "success": true,
+  "code": 200,
+  "data": {
+    "categories": [
+      {
+        "name": "鸡肉汉堡/卷",
+        "meals": [
+          { "code": "9900005456", "tags": ["套餐", "立省10.5元起"] },
+          { "code": "1440", "tags": ["单品", "人气经典", "外酥里嫩"] }
+        ]
+      },
+      {
+        "name": "小食甜品/其他",
+        "meals": [
+          { "code": "4810", "tags": ["小食"] },
+          { "code": "9900001234", "tags": ["小食", "中薯"] }
+        ]
+      },
+      {
+        "name": "饮品",
+        "meals": [
+          { "code": "9900008751", "tags": ["冷饮"] },
+          { "code": "9900008752", "tags": ["冷饮", "无糖"] }
+        ]
+      },
+      {
+        "name": "早餐",
+        "meals": [
+          { "code": "9900003321", "tags": ["早餐", "培根蛋麦满分"] }
+        ]
+      }
+    ],
+    "meals": {
+      "9900005456": { "name": "麦辣鸡腿汉堡三件套", "currentPrice": "33.5", "originalPrice": "47" },
+      "1440":        { "name": "麦辣鸡腿汉堡",     "currentPrice": "22.5", "originalPrice": "22.5" },
+      "4810":        { "name": "薯条(小)",         "currentPrice": "14.5", "originalPrice": "14.5" },
+      "9900001234":  { "name": "薯条(中)",         "currentPrice": "18.0", "originalPrice": "18.0" },
+      "9900008751":  { "name": "可乐(中)",         "currentPrice": "9.5",  "originalPrice": "9.5" },
+      "9900008752":  { "name": "无糖可乐(中)",     "currentPrice": "9.5",  "originalPrice": "9.5" },
+      "9900003321":  { "name": "培根蛋麦满分",     "currentPrice": "16.5", "originalPrice": "16.5" }
+    }
+  }
+}

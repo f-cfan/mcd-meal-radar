@@ -1,0 +1,17 @@
+{
+  "_source": "麦当劳官方 MCP · list-nutrition-foods",
+  "_captured_at": "2026-10-12 22:02:30",
+  "_note": "官方数据本身字段不全。缺失字段本项目一律保留 null，邮件中显示「未核实」，绝不用 0 冒充「不含」。",
+  "success": true, "code": 200,
+  "data": {
+    "foods": [
+      { "code": "9900005456", "name": "麦辣鸡腿汉堡三件套", "energy": 742, "protein": 32, "fat": 34, "carbohydrate": 72, "sodium": 1180, "calcium": 260 },
+      { "code": "1440",        "name": "麦辣鸡腿汉堡",     "energy": 496, "protein": 25, "fat": 26, "carbohydrate": 42, "sodium": 860,  "calcium": null },
+      { "code": "4810",        "name": "薯条(小)",         "energy": 336, "protein": 4,  "fat": 18, "carbohydrate": 44, "sodium": 330,  "calcium": 20 },
+      { "code": "9900001234",  "name": "薯条(中)",         "energy": 447, "protein": 5,  "fat": 24, "carbohydrate": 58, "sodium": 440,  "calcium": 25 },
+      { "code": "9900008751",  "name": "可乐(中)",         "energy": 140, "protein": 0,  "fat": 0,  "carbohydrate": 35, "sodium": 35,   "calcium": null },
+      { "code": "9900008752",  "name": "无糖可乐(中)",     "energy": 2,   "protein": 0,  "fat": 0,  "carbohydrate": 0,  "sodium": 5,    "calcium": null },
+      { "code": "9900003321",  "name": "培根蛋麦满分",     "energy": 368, "protein": 20, "fat": 21, "carbohydrate": 26, "sodium": 690,  "calcium": 310 }
+    ]
+  }
+}

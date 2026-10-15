@@ -1,0 +1,12 @@
+{
+  "_source": "麦当劳官方 MCP · available-coupons",
+  "_captured_at": "2026-10-12 22:05:05",
+  "_note": "auto-bind-coupons 会自动领取此列表中全部可用券，无需指定 couponId。本项目每日 09:00 任务调用一次。",
+  "success": true, "code": 200,
+  "data": {
+    "coupons": [
+      { "couponId": "CPN-NEW-9001", "title": "秋日新品尝鲜券",   "value": null, "expiresInDays": 14 },
+      { "couponId": "CPN-NEW-9002", "title": "会员日双倍积分券", "value": 500,  "expiresInDays": 7  }
+    ]
+  }
+}

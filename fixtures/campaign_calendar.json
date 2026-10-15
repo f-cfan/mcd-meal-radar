@@ -1,0 +1,13 @@
+{
+  "_source": "麦当劳官方 MCP · campaign-calendar",
+  "_captured_at": "2026-10-12 22:03:44",
+  "_note": "返回当月进行中、往期与未来活动。本项目只取「进行中」与「未来」，往期不展示。",
+  "success": true, "code": 200,
+  "data": {
+    "campaigns": [
+      { "title": "秋日金黄薯条节",       "status": "ongoing", "startDate": "2026-10-08", "endDate": "2026-10-20" },
+      { "title": "会员日双倍积分",       "status": "ongoing", "startDate": "2026-10-01", "endDate": "2026-10-31" },
+      { "title": "万圣节派对小聚",       "status": "upcoming", "startDate": "2026-10-24", "endDate": "2026-11-01" }
+    ]
+  }
+}

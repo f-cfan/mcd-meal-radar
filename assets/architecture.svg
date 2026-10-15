@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 560" width="1000" height="560" role="img" aria-label="架构图：定时调度器到 MCP 到四层约束引擎到邮件推送">
+  <rect width="1000" height="560" fill="#ffffff"/>
+
+  <text x="40" y="40" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif"
+        font-size="20" font-weight="700" fill="#1f1f1e">麦麦饭点雷达 · 架构与数据流</text>
+
+  <rect x="40" y="62" width="920" height="86" rx="10" fill="#e6f1fb" stroke="#185FA5" stroke-width="1"/>
+  <text x="58" y="86" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif"
+        font-size="14" font-weight="700" fill="#0C447C">① 定时调度 scheduler.py</text>
+  <g font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif" font-size="12" fill="#185FA5">
+    <rect x="58" y="96" width="86" height="34" rx="6" fill="#B5D4F4"/><text x="101" y="117" text-anchor="middle">09:00 领券</text>
+    <rect x="154" y="96" width="86" height="34" rx="6" fill="#B5D4F4"/><text x="197" y="117" text-anchor="middle">11:00 午餐</text>
+    <rect x="250" y="96" width="86" height="34" rx="6" fill="#B5D4F4"/><text x="293" y="117" text-anchor="middle">16:30 晚餐</text>
+    <rect x="346" y="96" width="86" height="34" rx="6" fill="#B5D4F4"/><text x="389" y="117" text-anchor="middle">20:00 过期</text>
+    <text x="452" y="113" fill="#5F5E5A">全部可配置 · 离线 fixtures 与真实 MCP 双模式</text>
+  </g>
+
+  <path d="M500 148 L500 182" stroke="#888780" stroke-width="1.5" fill="none" marker-end="url(#ar)"/>
+
+  <rect x="40" y="182" width="920" height="118" rx="10" fill="#e1f5ee" stroke="#0F6E56" stroke-width="1"/>
+  <text x="58" y="206" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif"
+        font-size="14" font-weight="700" fill="#04342C">② 数据采集 collector.py · 仅调用只读 Tool + 1 个领券 Tool</text>
+  <g font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="11" fill="#0F6E56">
+    <rect x="58" y="218" width="118" height="30" rx="5" fill="#9FE1CB"/><text x="117" y="237" text-anchor="middle">delivery-query-stores</text>
+    <rect x="184" y="218" width="88" height="30" rx="5" fill="#9FE1CB"/><text x="228" y="237" text-anchor="middle">query-meals</text>
+    <rect x="280" y="218" width="120" height="30" rx="5" fill="#9FE1CB"/><text x="340" y="237" text-anchor="middle">list-nutrition-foods</text>
+    <rect x="408" y="218" width="132" height="30" rx="5" fill="#9FE1CB"/><text x="474" y="237" text-anchor="middle">query-store-coupons</text>
+    <rect x="548" y="218" width="118" height="30" rx="5" fill="#9FE1CB"/><text x="607" y="237" text-anchor="middle">query-my-coupons</text>
+    <rect x="674" y="218" width="106" height="30" rx="5" fill="#9FE1CB"/><text x="727" y="237" text-anchor="middle">calculate-price</text>
+    <rect x="788" y="218" width="112" height="30" rx="5" fill="#9FE1CB"/><text x="844" y="237" text-anchor="middle">campaign-calendar</text>
+    <rect x="58" y="256" width="150" height="30" rx="5" fill="#FAC775"/><text x="133" y="275" text-anchor="middle">auto-bind-coupons</text>
+    <text x="220" y="275" fill="#A32D2D">仅此一个改变账户状态 · 每日 09:00</text>
+  </g>
+
+  <path d="M500 300 L500 334" stroke="#888780" stroke-width="1.5" fill="none" marker-end="url(#ar)"/>
+
+  <rect x="40" y="334" width="920" height="128" rx="10" fill="#eeedfe" stroke="#534AB7" stroke-width="1"/>
+  <text x="58" y="358" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif"
+        font-size="14" font-weight="700" fill="#26215C">③ 四层约束求解 solver.py · 枚举与计价严格分离</text>
+  <g font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif">
+    <rect x="58" y="370" width="128" height="42" rx="6" fill="#CECBF6"/><text x="122" y="388" text-anchor="middle" font-size="12" font-weight="700" fill="#26215C">① 偏好层</text><text x="122" y="404" text-anchor="middle" font-size="10" fill="#534AB7">你吃你的</text>
+    <rect x="198" y="370" width="128" height="42" rx="6" fill="#CECBF6"/><text x="262" y="388" text-anchor="middle" font-size="12" font-weight="700" fill="#26215C">② 钱包层</text><text x="262" y="404" text-anchor="middle" font-size="10" fill="#534AB7">你花你的 · 真实核价</text>
+    <rect x="338" y="370" width="128" height="42" rx="6" fill="#CECBF6"/><text x="402" y="388" text-anchor="middle" font-size="12" font-weight="700" fill="#26215C">③ 身体层</text><text x="402" y="404" text-anchor="middle" font-size="10" fill="#534AB7">你不能垮</text>
+    <rect x="478" y="370" width="128" height="42" rx="6" fill="#CECBF6"/><text x="542" y="388" text-anchor="middle" font-size="12" font-weight="700" fill="#26215C">④ 活动层</text><text x="542" y="404" text-anchor="middle" font-size="10" fill="#534AB7">现在有什么</text>
+    <rect x="620" y="370" width="160" height="42" rx="6" fill="#F7C1C1"/><text x="700" y="388" text-anchor="middle" font-size="12" font-weight="700" fill="#501313">查不到 → 标「未核价」</text><text x="700" y="404" text-anchor="middle" font-size="10" fill="#A32D2D">绝不估算</text>
+    <text x="58" y="440" font-size="11" fill="#534AB7">求解结果附带「为什么」与「注意什么」，输出可解释的推荐</text>
+  </g>
+
+  <path d="M500 462 L500 496" stroke="#888780" stroke-width="1.5" fill="none" marker-end="url(#ar)"/>
+
+  <rect x="40" y="496" width="440" height="44" rx="10" fill="#faeeda" stroke="#854F0B" stroke-width="1"/>
+  <text x="58" y="523" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif"
+        font-size="13" font-weight="700" fill="#412402">④ 邮件推送 mail.py · 标准 SMTP</text>
+
+  <rect x="500" y="496" width="460" height="44" rx="10" fill="#fcebeb" stroke="#A32D2D" stroke-width="1"/>
+  <text x="518" y="523" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif"
+        font-size="13" font-weight="700" fill="#501313">降级链路：401 → 续授权邮件 + 缓存快照（非静默失败）</text>
+
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+</svg>

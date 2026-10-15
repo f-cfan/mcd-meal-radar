@@ -1,0 +1,77 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.9", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: 运行单元测试（零依赖，无需 Token）
+        run: python tests/test_all.py
+
+      - name: 运行离线演示（零依赖，无需 Token）
+        run: python demo.py
+
+      - name: 校验 CONTEST_DECLARATION.md 与官方原文逐字一致
+        run: |
+          EXPECTED="cd28101bcb29cc8fb24b372fe91ce6b42c4a1487a54e01f7ade0c8c6a84241b7"
+          ACTUAL=$(shasum -a 256 CONTEST_DECLARATION.md 2>/dev/null | awk '{print $1}' || sha256sum CONTEST_DECLARATION.md | awk '{print $1}')
+          if [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "❌ 参赛声明已被修改，必须与官方版本逐字一致"
+            echo "  期望: $EXPECTED"
+            echo "  实际: $ACTUAL"
+            exit 1
+          fi
+          echo "✅ 参赛声明与官方原文一致"
+
+      - name: 扫描仓库中的潜在密钥
+        run: |
+          echo "检查真实 Token / 授权码是否被误提交..."
+          FOUND=0
+          # MCP Token 为 JWT 形态
+          if grep -rInE "Bearer [A-Za-z0-9_-]{20,}" --exclude-dir=.git . ; then
+            echo "❌ 发现疑似 MCP Token"; FOUND=1
+          fi
+          # SMTP 授权码为 16 位随机串（排除明显占位符与哈希）
+          if grep -rInE "[a-z]{4}[0-9]{4}[a-z]{4}[0-9]{4}" --include="*.py" --include="*.json" --exclude-dir=.git . ; then
+            echo "❌ 发现疑似 SMTP 授权码"; FOUND=1
+          fi
+          if [ $FOUND -ne 0 ]; then
+            exit 1
+          fi
+          echo "✅ 未发现真实凭证"
+
+  demo-preview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 生成邮件预览产物
+        run: python demo.py
+
+      - name: 上传邮件预览
+        uses: actions/upload-artifact@v4
+        with:
+          name: email-preview
+          path: out/*.html
+          retention-days: 30

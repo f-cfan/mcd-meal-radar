@@ -1,0 +1,11 @@
+{
+  "_source": "麦当劳官方 MCP · query-meals（指定门店）",
+  "_captured_at": "2026-10-12 22:00:30",
+  "_note": "不同门店菜单可能不同。canWithOrder=false 表示该商品当前门店不可下单，需剔除。",
+  "success": true, "code": 200,
+  "data": {
+    "storeCode": "1990622",
+    "unavailableCodes": ["9900001234"],
+    "soldOutNote": "薯条(中) 在本店当前不可售，组合推荐时应自动剔除。"
+  }
+}

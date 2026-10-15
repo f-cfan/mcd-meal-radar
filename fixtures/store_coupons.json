@@ -1,0 +1,13 @@
+{
+  "_source": "麦当劳官方 MCP · query-store-coupons",
+  "_captured_at": "2026-10-12 22:01:41",
+  "_note": "仅当前门店可用。value 为 null 表示券面价值无法从菜单推算 —— 本项目不做预估，只标注「待核」。",
+  "success": true, "code": 200,
+  "data": {
+    "coupons": [
+      { "couponId": "CPN-STORE-3301", "title": "无糖饮品立减4.5元券", "value": 450, "expiresInDays": 1 },
+      { "couponId": "CPN-STORE-3302", "title": "主食立省券",           "value": null, "expiresInDays": 5 },
+      { "couponId": "CPN-STORE-3303", "title": "早餐时段立减3元券",     "value": 300, "expiresInDays": 2 }
+    ]
+  }
+}

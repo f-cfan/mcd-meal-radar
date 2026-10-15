@@ -25,3 +25,8 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# 运行时产物
+out/
+logs/
+data/

@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>麦麦饭点雷达</title></head>
+<body style="margin:0;padding:0;background:#f6f6f4">
+
+    <table width="100%" cellspacing="0" cellpadding="0" style="background:#f6f6f4">
+      <tr><td align="center" style="padding:24px 12px">
+        <table width="560" cellspacing="0" cellpadding="0"
+               style="background:#ffffff;border-radius:12px;overflow:hidden">
+          <tr><td style="padding:20px">
+            <div style="font-size:15px;font-weight:500;color:#1f1f1e">麦麦饭点雷达</div>
+            <div style="font-size:12px;color:#6b6a66;margin-top:4px">授权失效通知</div>
+          </td></tr>
+
+          <tr><td style="padding:18px 20px;background:#fcebeb;border-left:3px solid #a32d2d">
+            <div style="font-weight:500;color:#a32d2d;margin-bottom:8px">
+              需要重新授权，未能获取实时数据
+            </div>
+            <div style="font-size:13px;color:#1f1f1e;line-height:1.9">
+              MCP Token 已失效。请用手机号登录
+              <b>open.mcd.cn/mcp</b> → 控制台 → 激活 → 复制新 Token，
+              然后更新环境变量 <b>MCD_MCP_TOKEN</b> 并重启定时任务。
+            </div>
+          </td></tr>
+
+          <tr><td style="padding:14px 20px;font-size:12px;color:#6b6a66">
+            错误详情：MCP 返回 401；原因：MCP Token 无效、已过期或未提供
+          </td></tr>
+
+          
+
+          <tr><td style="padding:14px 20px;border-top:1px solid #e5e3de;font-size:11px;color:#6b6a66;line-height:1.8">
+            你会收到这封邮件，是因为本项目每天定时运行 —— Token 失效会被第一时间告知，
+            而不是让建议静默过期。
+          </td></tr>
+        </table>
+      </td></tr>
+    </table>
+</body></html>

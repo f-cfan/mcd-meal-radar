@@ -1,0 +1,13 @@
+{
+  "_scenario": "Token 失效降级演示",
+  "_source": "官方 README 错误码表 + 实测端点响应",
+  "_note": "本文件不是 MCP 的业务响应，而是模拟 Token 失效时服务应如何降级。定时任务捕获后发送续授权提醒 + 缓存快照，而不是静默失败。",
+  "httpStatus": 401,
+  "body": { "code": "0001", "msg": "系统错误" },
+  "mcpError": { "code": 401, "reason": "MCP Token 无效、已过期或未提供" },
+  "expectedUserFacingMessage": {
+    "title": "麦麦助手需要重新授权",
+    "body": "MCP Token 已失效，未能获取实时数据。请用手机号登录 https://open.mcd.cn/mcp → 控制台 → 激活 → 复制新 Token → 更新环境变量 MCD_MCP_TOKEN。",
+    "fallback": "附：本次未获取到实时数据，以下为缓存快照。"
+  }
+}

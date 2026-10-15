@@ -1,0 +1,51 @@
+{
+  "_readme": [
+    "本文件是脱敏后的 MCP 配置示例，只允许环境变量占位符。",
+    "请复制为 ~/.workbuddy/mcp.json 或本项目根目录的 .env 后填入真实值。",
+    "真实 Token 严禁提交到仓库 —— data/ 与 .env 均已在 .gitignore 中排除。"
+  ],
+
+  "mcpServers": {
+    "mcd-mcp": {
+      "type": "streamablehttp",
+      "url": "https://mcp.mcd.cn",
+      "headers": {
+        "Authorization": "Bearer ${MCD_MCP_TOKEN}"
+      }
+    }
+  },
+
+  "_env": {
+    "MCD_MCP_TOKEN": "从 https://open.mcd.cn/mcp 获取：手机号登录 → 控制台 → 激活 → 复制 Token",
+    "SMTP_HOST": "SMTP 服务器地址，示例为 smtp.qq.com",
+    "SMTP_PORT": "SMTP 端口，示例为 465（SSL）",
+    "SMTP_USER": "发件邮箱地址",
+    "SMTP_PASSWORD": "SMTP 授权码，注意不是邮箱登录密码",
+    "SMTP_SENDER": "发件邮箱地址，缺省时使用 SMTP_USER",
+    "SMTP_SENDER_NAME": "发件人显示名，缺省为「麦麦饭点雷达」",
+    "RADAR_TO": "收件邮箱地址",
+    "SMTP_USE_SSL": "1 表示使用 SSL/TLS 直连，0 表示 STARTTLS"
+  },
+
+  "_mcp_notes": {
+    "endpoint": "https://mcp.mcd.cn",
+    "transport": "Streamable HTTP，不支持 WebSocket",
+    "protocol_version": "2025-06-18",
+    "rate_limit": "每个 Token 每分钟最多 600 次请求，超出返回 429",
+    "error_codes": {
+      "401": "Token 无效、已过期或未提供 —— 本项目会触发降级并发送续授权提醒",
+      "429": "触发限流 —— 建议避开高峰时段抓取"
+    },
+    "token_note": "官方未公布 Token 有效期天数，但实测无 Token 时端点会拒绝请求（HTTP 403 / code 0001）。请在环境变量更新后重启定时任务。"
+  },
+
+  "_scenes": {
+    "_note": "就餐场景决定官方入参组合。本项目在 src/mcd_adapter.py 的 SCENES 中显式建模，缺项直接抛错。",
+    "到店自取": { "orderType": 1, "beCode": "无", "额外必填": ["takeWayCode"] },
+    "得来速": { "orderType": 1, "beCode": "有", "额外必填": ["takeWayCode"] },
+    "麦乐送外送": { "orderType": 2, "beCode": "有", "额外必填": ["addressId"] },
+    "团餐": { "orderType": 2, "beCode": "有", "额外必填": ["addressId"] }
+  },
+
+  "_unit_warning": "calculate-price 返回单位为「分」，query-meals 返回单位为「元（字符串）」。混用会导致金额差 100 倍，本项目在 mcd_adapter.Money 层统一换算。"
+}

@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" width="1200" height="300" role="img" aria-label="麦麦饭点雷达 每天饭点主动来找你">
+  <rect width="1200" height="300" fill="#0f6e56"/>
+  <circle cx="1090" cy="60" r="150" fill="#1d9e75" opacity="0.35"/>
+  <circle cx="1140" cy="240" r="110" fill="#5dcaa5" opacity="0.22"/>
+  <circle cx="140" cy="270" r="90" fill="#04342c" opacity="0.18"/>
+
+  <text x="70" y="96" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif"
+        font-size="58" font-weight="700" fill="#ffffff" letter-spacing="1">麦麦饭点雷达</text>
+  <text x="70" y="150" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif"
+        font-size="30" font-weight="400" fill="#9fe1cb">每天饭点主动来找你</text>
+
+  <line x1="70" y1="178" x2="560" y2="178" stroke="#5dcaa5" stroke-width="1" opacity="0.5"/>
+
+  <text x="70" y="214" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif"
+        font-size="21" font-weight="400" fill="#e1f5ee">定时优惠提醒 · 四层约束求解 · 真实核价</text>
+
+  <g transform="translate(640, 78)">
+    <rect x="0" y="0" width="250" height="144" rx="12" fill="#ffffff" opacity="0.95"/>
+    <text x="20" y="32" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif"
+          font-size="15" font-weight="700" fill="#a32d2d">⚠ 有 2 张券即将过期</text>
+    <text x="20" y="62" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif"
+          font-size="13" fill="#5f5e5a">无糖饮品立减4.5元券</text>
+    <text x="20" y="84" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif"
+          font-size="12" fill="#a32d2d">今天到期</text>
+    <line x1="20" y1="98" x2="230" y2="98" stroke="#e5e3de" stroke-width="1"/>
+    <text x="20" y="122" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif"
+          font-size="13" font-weight="700" fill="#1f1f1e">麦辣鸡腿汉堡三件套</text>
+    <text x="230" y="122" text-anchor="end" font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+          font-size="15" font-weight="700" fill="#0f6e56">¥33.50</text>
+  </g>
+
+  <text x="70" y="272" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif"
+        font-size="15" fill="#9fe1cb">基于麦当劳官方 MCP · 参与麦当劳程序员创意开发大赛</text>
+</svg>

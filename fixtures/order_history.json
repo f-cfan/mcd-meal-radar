@@ -1,0 +1,14 @@
+{
+  "_source": "麦当劳官方 MCP · order-list",
+  "_captured_at": "2026-10-12 22:04:20",
+  "_note": "仅保留用于演示画像推导的最小字段集。真实部署中此数据仅在本地处理，不外传。",
+  "success": true, "code": 200,
+  "data": {
+    "orders": [
+      { "orderId": "ORD-8801", "storeCode": "1990622", "orderType": 2, "totalPrice": 3350, "items": [ { "productCode": "9900005456", "quantity": 1 } ] },
+      { "orderId": "ORD-8790", "storeCode": "1990622", "orderType": 2, "totalPrice": 3850, "items": [ { "productCode": "9900005456", "quantity": 1 }, { "productCode": "9900008752", "quantity": 1 } ] },
+      { "orderId": "ORD-8755", "storeCode": "1990622", "orderType": 2, "totalPrice": 2600, "items": [ { "productCode": "9900003321", "quantity": 1 }, { "productCode": "9900008751", "quantity": 1 } ] },
+      { "orderId": "ORD-8702", "storeCode": "1991888", "orderType": 1, "totalPrice": 2250, "items": [ { "productCode": "1440", "quantity": 1 } ] }
+    ]
+  }
+}
