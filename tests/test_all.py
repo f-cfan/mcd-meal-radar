@@ -297,5 +297,100 @@ class TestNoOrderingTools(unittest.TestCase):
                                          f"{fname}:{lineno} 出现下单工具调用")
 
 
+
+
+
+
+class TestPushChannels(unittest.TestCase):
+    """双通道推送 —— Agent Mail 优先，失败自动回落 SMTP。"""
+
+    def setUp(self):
+        """每个用例独立的通道环境变量，避免用例间互相污染。"""
+        self._env = dict(os.environ)
+        for k in ("MAIL_CHANNEL", "RADAR_TO", "SMTP_USER"):
+            os.environ.pop(k, None)
+
+    def tearDown(self):
+        os.environ.clear()
+        os.environ.update(self._env)
+
+    def test_default_channel_is_auto(self):
+        """默认应是 auto：Agent 优先，失败回落。"""
+        import mail as mail_mod
+        # 环境未显式设置时应落到 auto
+        os.environ.pop("MAIL_CHANNEL", None)
+        self.assertIn("MAIL_CHANNEL=auto", mail_mod.describe_channels())
+
+    def test_channel_ordering(self):
+        """auto 必须先 Agent 后 SMTP —— Agent Mail 是推荐通道。"""
+        import mail as mail_mod
+        from unittest import mock
+        calls = []
+
+        def fake_agent(to, subject, html, text=""):
+            calls.append("agent")
+            return mail_mod.PushResult(False, "模拟失败", "agent-mail")
+
+        def fake_smtp(subject, html, text=""):
+            calls.append("smtp")
+            return mail_mod.PushResult(True, "模拟成功", "smtp")
+
+        with mock.patch.object(mail_mod, "push_via_agent", fake_agent), \
+             mock.patch.object(mail_mod, "send_via_smtp", fake_smtp):
+            os.environ["MAIL_CHANNEL"] = "auto"
+            os.environ["RADAR_TO"] = "someone@example.com"
+            res = mail_mod.push("", "主题", "<p>正文</p>")
+
+        self.assertEqual(calls, ["agent", "smtp"], "auto 应按 Agent→SMTP 顺序尝试")
+        self.assertTrue(res.ok, "SMTP 兜底成功时整体应成功")
+        self.assertEqual(res.channel, "smtp")
+        self.assertIn("回落原因", res.note, "应保留回落原因便于排障")
+
+    def test_agent_only_channel_does_not_fall_back(self):
+        """显式配置 agent 时不应偷偷回落到 SMTP —— 用户可能只想走 Agent。"""
+        import mail as mail_mod
+        from unittest import mock
+
+        def fake_agent(to, subject, html, text=""):
+            return mail_mod.PushResult(False, "Agent 不可用", "agent-mail")
+
+        def fail_smtp(*a, **k):
+            raise AssertionError("agent 模式不应调用 SMTP")
+
+        with mock.patch.object(mail_mod, "push_via_agent", fake_agent), \
+             mock.patch.object(mail_mod, "send_via_smtp", fail_smtp):
+            os.environ["MAIL_CHANNEL"] = "agent"
+            os.environ["RADAR_TO"] = "someone@example.com"
+            res = mail_mod.push("", "主题", "<p>正文</p>")
+
+        self.assertFalse(res.ok)
+        os.environ["MAIL_CHANNEL"] = "auto"
+
+    def test_missing_recipient_fails_fast(self):
+        """未配置收件地址时应立即失败，不要白跑一次通道。
+
+        需 mock 掉 .env 读取 —— 本机 .env 里配了 RADAR_TO，
+        而 _get 会回落到读文件，仅清环境变量不足以隔离。
+        """
+        import mail as mail_mod
+        from unittest import mock
+        with mock.patch.object(mail_mod, "load_env", lambda *a, **k: {}):
+            res = mail_mod.push("", "主题", "<p>正文</p>")
+        self.assertFalse(res.ok)
+        self.assertIn("收件地址", res.note)
+        self.assertEqual(res.channel, "none", "地址缺失时不应尝试任何通道")
+
+    def test_smtp_never_leaks_secret(self):
+        """脱敏描述里绝不能出现授权码明文。"""
+        import mail as mail_mod
+        from unittest import mock
+        with mock.patch.dict(os.environ, {
+            "SMTP_USER": "user@qq.com", "SMTP_PASSWORD": "abcdef1234567890",
+        }):
+            desc = mail_mod.SmtpConfig().describe()
+        self.assertNotIn("abcdef1234567890", desc)
+        self.assertIn("已配置", desc)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

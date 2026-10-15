@@ -30,7 +30,7 @@ from decimal import Decimal
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
 
 from collector import get_snapshot  # noqa: E402
-from mail import MailConfig, send_html  # noqa: E402
+from mail import describe_channels, push  # noqa: E402
 from mailer import render_digest, render_plain, render_token_expired  # noqa: E402
 from mcd_adapter import MCPError  # noqa: E402
 from solver import DietaryPolicy, Decision, TasteProfile, load_profile, solve  # noqa: E402
@@ -133,14 +133,14 @@ def run_slot(
         "degraded": snap.degraded, "degrade_reason": snap.degrade_reason,
         "html_path": html_path, "text_path": os.path.join(outdir, f"{safe}.txt"),
         "menu_items": len(snap.menu), "has_decision": decision.best is not None,
-        "sent": False, "send_note": None,
+        "sent": False, "send_note": None, "channel": "none",
     }
 
-    # 5) 推送
+    # 5) 推送（Agent Mail 优先，失败自动回落 SMTP）
     if do_send:
-        cfg = MailConfig()
-        ok, note = send_html(subject, html, cfg, text)
-        result["sent"], result["send_note"] = ok, note
+        res = push("", subject, html, text)
+        result["sent"], result["send_note"] = res.ok, res.note
+        result["channel"] = res.channel
 
     return result
 
@@ -193,7 +193,7 @@ def main() -> int:
         targets = [s for s in SLOTS if s.key == args.now]
 
     print(f"模式：{mode}（{'需 MCD_MCP_TOKEN' if mode == 'live' else '离线 fixtures，无需 Token'}）")
-    print(f"SMTP：{MailConfig().describe()}")
+    print(f"推送：{describe_channels()}")
     print("-" * 62)
 
     failures = 0
@@ -206,8 +206,12 @@ def main() -> int:
             continue
 
         flag = "（降级）" if res["degraded"] else ""
-        sent = f" · 已发送：{res['send_note']}" if res["sent"] else (
-            f" · 未发送：{res['send_note']}" if args.send else "")
+        sent = ""
+        if args.send:
+            if res["sent"]:
+                sent = f" · 已通过 {res['channel']} 发送"
+            else:
+                sent = f" · 未发送：{res['send_note']}"
         print(f"[{slot.label}]{flag} 菜单 {res['menu_items']} 项 · "
               f"建议{'已生成' if res['has_decision'] else '未生成'} → {res['html_path']}{sent}")
         if res["degrade_reason"]:

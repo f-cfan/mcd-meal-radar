@@ -242,39 +242,53 @@ MCP 返回 401
 
 用手机号登录 [open.mcd.cn/mcp](https://open.mcd.cn/mcp) → 控制台 → 激活 → 复制 Token。
 
-### 2. 配置环境变量
+### 2. 配置推送通道
 
-先跑一次配置自检脚本，它会打开官方授权码页面并检查当前配置：
+**推荐：Agent Mail** —— QQ 邮箱团队的 Agent 专属邮箱服务，免授权码、扫码即用。
 
-```bash
-python scripts/setup_mail_auth.py
 ```
+WorkBuddy 首页 → 更多 → 我的邮箱 → 启用（微信扫码）
+```
+
+你的 Agent 邮箱地址可在 [agent.qq.com](https://agent.qq.com) 查看。
 
 <details>
-<summary>为什么授权码必须你自己去官方页面拿？</summary>
+<summary>为什么优先用 Agent Mail 而不是自建 SMTP？</summary>
 
-SMTP 授权码是 QQ 邮箱的**账号安全凭证**，只能由腾讯官方流程签发：
+| | Agent Mail | 自建 SMTP |
+|---|---|---|
+| 需要授权码 | ❌ 不用 | ✅ 需要 16 位短信验证 |
+| 是否暴露私人邮箱 | ❌ 与个人邮箱隔离 | ✅ 需要给第三方程序发授权码 |
+| 适配 Agent | 官方一等公民 | 自己处理发信逻辑 |
+| 额度 | 每地址 1GB、每天 50 封 | 取决于邮箱设置 |
 
-```
-登录 mail.qq.com → 设置 → 账号与安全
-  → 找到「POP3/IMAP/SMTP/Exchange/CardDAV服务」→ 点「开启」
-  → 按提示发送短信验证 → 生成 16 位授权码
-```
-
-验证环节需要你本人的手机号，**任何第三方工具都无法代替**。这是账号安全设计，不是技术限制。
-所以本项目能做的是：帮你打开正确的页面、告诉你每一步在哪、检查你填得对不对，
-但不能也不应该替你走完验证流程。
+短信验证环节需要你本人的手机号，**任何第三方工具都无法代替** —— 这是账号安全设计。
+所以如果你在 WorkBuddy 里用，直接走 Agent Mail 就完全绕开了这个问题。
 
 </details>
 
-复制 `.env.example` 为 `.env` 并填入真实值：
+**备选：SMTP** —— 适合部署在没有 Agent 的环境（自己的服务器、CI 等）：
+
+```bash
+# 先跑自检，它会打开官方授权码页面
+python scripts/setup_mail_auth.py
+```
+
+官方路径：`mail.qq.com` → 设置 → 账号与安全 → 开启 IMAP/SMTP → 短信验证 → 复制 16 位授权码。
+
+然后配置 `.env`：
 
 ```bash
 cp .env.example .env
 ```
 
 ```ini
-MCD_MCP_TOKEN=你的 Token
+MCP_MCP_TOKEN=你的 Token
+
+# 推送通道：auto（Agent 优先，失败回落）/ agent / smtp
+MAIL_CHANNEL=auto
+
+# 仅 SMTP 通道需要以下四项
 SMTP_HOST=smtp.qq.com
 SMTP_PORT=465
 SMTP_USER=你的邮箱
@@ -362,7 +376,7 @@ mcd-meal-radar/
 │   ├── collector.py         # 数据抓取编排（live / fixture 双源同出口）
 │   ├── solver.py            # 四层约束求解引擎
 │   ├── mailer.py            # 邮件渲染（HTML + 纯文本）
-│   └── mail.py              # SMTP 推送
+│   └── mail.py              # 双通道推送（Agent Mail 优先 / SMTP 备选）
 ├── fixtures/                # 12 份录制的真实 MCP 响应
 ├── tests/test_all.py        # 23 个单测
 ├── assets/                  # Banner、架构图

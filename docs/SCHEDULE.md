@@ -52,7 +52,16 @@ macOS 上 crontab 若在休眠期间错过执行点，可改用 `launchd`（见�
 
 本项目的开发环境即 WorkBuddy，可直接用其自动化体系调度。
 
-在 WorkBuddy 中创建四条定时任务，提示词示例：
+### 推荐做法：用 Agent Mail 发送（零配置）
+
+**推送通道用 Agent Mail**（见 README 双通道说明）—— 在 WorkBuddy 里无需 SMTP 授权码。
+把下面提示词里的「推送」一步改为：
+
+> 生成 out/lunch.html 后，用 Agent Mail 把它发到我的邮箱，标题「麦麦饭点雷达 · 午间建议」。
+
+WorkBuddy 会自动用内置的 Agent Mail 能力完成发送。
+
+### 提示词示例（若走 scheduler.py 脚本）
 
 **任务 1 · 早间领券（09:00）**
 

@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""授权码生成指引 + 配置自检。
+"""推送通道配置指引与自检。
 
-为什么不能自动获取授权码
-------------------------
-SMTP 授权码是 QQ 邮箱的**账号安全凭证**，只能由腾讯官方流程签发：
-    登录 mail.qq.com → 设置 → 账号与安全 → 开启 IMAP/SMTP
-    → 手机短信验证 → 生成 16 位授权码
+两条通道
+--------
+1. **Agent Mail**（推荐）—— QQ 邮箱团队的 Agent 专属邮箱服务
+   免授权码、扫码即用、与个人邮箱隔离。
+   WorkBuddy 用户：首页「更多 - 我的邮箱」直接启用。
 
-任何第三方工具都无法代替你完成这个流程，这是账号安全设计，
-不是技术限制。本脚本只做两件事：
-
-  1. 打开官方授权码页面（省去手动找入口）
-  2. 检查你填的授权码是否已配置、以及格式是否合理
+2. **SMTP**（备选）—— 自建邮件通道
+   需授权码，而授权码只能由腾讯官方流程签发：
+       mail.qq.com → 设置 → 账号与安全 → 开启 IMAP/SMTP
+       → 手机短信验证 → 生成 16 位授权码
+   **短信验证必须用户本人操作，任何第三方工具都无法代替。**
 
 用法：
-    python scripts/setup_mail_auth.py          # 打开页面 + 检查配置
+    python scripts/setup_mail_auth.py          # 打开页面 + 检查两条通道
     python scripts/setup_mail_auth.py --check  # 只检查不打开页面
 """
 
@@ -30,6 +30,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ENV_PATH = os.path.join(ROOT, ".env")
 
 MAIL_URL = "https://mail.qq.com/mail/setting"
+AGENT_MAIL_URL = "https://agent.qq.com"
 
 # 16 位授权码通常是小写字母 + 数字混合；这里只做宽松提示，不做严格校验
 AUTH_CODE_RE = re.compile(r"^[A-Za-z0-9]{16}$")
@@ -63,6 +64,12 @@ def read_env(path: str = ENV_PATH) -> dict[str, str]:
     return env
 
 
+def agent_mail_available() -> bool:
+    """检测 Agent Mail CLI 是否已安装。"""
+    from shutil import which
+    return which("agently-cli") is not None
+
+
 def check() -> int:
     env = read_env()
     # 系统环境变量优先（launchd / cron 场景）
@@ -71,8 +78,20 @@ def check() -> int:
 
     print()
     print("=" * 58)
-    print("  SMTP 配置自检")
+    print("  推送通道配置自检")
     print("=" * 58)
+
+    # ---- 通道一：Agent Mail ----
+    agent_cli = agent_mail_available()
+    channel = os.environ.get("MAIL_CHANNEL") or env.get("MAIL_CHANNEL", "auto")
+    print()
+    print("  通道一 · Agent Mail（推荐）")
+    print(f"    {'✅' if agent_cli else 'ℹ️ '} CLI        "
+          f"{'已安装' if agent_cli else '未安装（WorkBuddy 内置能力仍可用）'}")
+    print(f"    {'✅' if channel != 'smtp' else '⚠️ '} MAIL_CHANNEL  {channel}")
+    if not agent_cli:
+        print("       → 启用方式：WorkBuddy 首页「更多 - 我的邮箱」，扫码即可")
+        print(f"       → 或访问 {AGENT_MAIL_URL} 查看你的 Agent 邮箱")
 
     user = get("SMTP_USER")
     password = get("SMTP_PASSWORD")
@@ -91,6 +110,8 @@ def check() -> int:
         if not passed and hint:
             print(f"     → {hint}")
 
+    print()
+    print("  通道二 · SMTP（备选）")
     line("发件邮箱", user, bool(user), "在 .env 里设置 SMTP_USER")
     line("收件邮箱", to, bool(to), "在 .env 里设置 RADAR_TO（缺省与发件相同）")
     line("授权码", password, bool(password),
@@ -109,12 +130,21 @@ def check() -> int:
 
     print()
     if ok and password:
-        print("配置看起来完整。测试发送：")
+        print("SMTP 配置完整。测试发送：")
         print("    python scheduler.py --fixture --now lunch --send")
-    else:
-        print("配置未完成。请先获取授权码（见上方步骤），填入 .env 后重跑本脚本。")
+        print()
+        print("提示：在 WorkBuddy 中运行时，直接说「帮我发一封测试邮件」即可走内置 Agent Mail，")
+        print("      无需任何授权码配置。")
+        return 0
+
+    print("SMTP 未配置完整。这是正常的 —— 你在 WorkBuddy 中运行时不需要它。")
     print()
-    return 0 if (user and password) else 1
+    print("推荐路径（二选一）：")
+    print("  A. 用 Agent Mail：WorkBuddy 首页「更多 - 我的邮箱」→ 扫码启用，零配置")
+    print(f"     你的 Agent 邮箱可在 {AGENT_MAIL_URL} 查看")
+    print("  B. 用 SMTP：按上方路径获取 16 位授权码，填入 .env 的 SMTP_PASSWORD")
+    print()
+    return 0
 
 
 def main() -> int:
