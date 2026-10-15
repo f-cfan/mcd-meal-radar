@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 环境变量与密钥 —— 严禁提交
+.env
+.env.*
+!.env.example
+mcp-config.json
+*.token
+secrets/
+
+# 本地数据（含用户偏好画像，属敏感信息）
+data/
+*.local.json
+profile.local.json
+state/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
