@@ -1,0 +1,53 @@
+{
+  "_source": "麦当劳官方 MCP · calculate-price（实测 2026-10-15）",
+  "_params": {
+    "storeCode": "1400649",
+    "beCode": "140064902",
+    "orderType": 2,
+    "beType": 2,
+    "items": [
+      {
+        "productCode": "9900016490",
+        "quantity": 1
+      }
+    ]
+  },
+  "_item": "龙焰鸡腿堡四件套",
+  "_unit_warning": "所有金额单位为「分」。price = 商品 + 配送 + 打包，且 productList 会混入「打包服务费」这类自动追加项。",
+  "_breakdown": {
+    "total": 4480,
+    "product": 3690,
+    "delivery": 600,
+    "packing": 190,
+    "discount": 0,
+    "original": 4480
+  },
+  "success": true,
+  "data": {
+    "productOriginalPrice": 3690,
+    "productPrice": 3690,
+    "deliveryOriginalPrice": 600,
+    "deliveryPrice": 600,
+    "packingOriginalPrice": 190,
+    "packingPrice": 190,
+    "originalPrice": 4480,
+    "discount": 0,
+    "price": 4480,
+    "productList": [
+      {
+        "productCode": "9900016490",
+        "productName": "龙焰鸡腿堡四件套",
+        "quantity": 1,
+        "originalSubtotal": 3690,
+        "subtotal": 3690
+      },
+      {
+        "productCode": "920174",
+        "productName": "打包服务费",
+        "quantity": 19,
+        "originalSubtotal": 190,
+        "subtotal": 0
+      }
+    ]
+  }
+}

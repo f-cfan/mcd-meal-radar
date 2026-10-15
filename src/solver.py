@@ -73,6 +73,9 @@ class Candidate:
     reasons: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     rejected_by: str | None = None
+    # 实付费用构成（原始「分」）。外送场景与菜单标价不同，需向用户说明：
+    # price 含配送费与打包费，只看 productPrice 会以为算错了。
+    fee_breakdown: dict[str, int | None] = field(default_factory=dict)
 
     @property
     def is_quoted(self) -> bool:
@@ -81,6 +84,25 @@ class Candidate:
     @property
     def name(self) -> str:
         return " + ".join(i.name for i in self.items)
+
+    def fee_note(self) -> str:
+        """费用构成说明。实测外送场景 price = 商品 + 配送 + 打包。"""
+        fb = self.fee_breakdown or {}
+        delivery = fb.get("delivery")
+        packing = fb.get("packing")
+        product = fb.get("product")
+        if not any((delivery, packing)):
+            return ""
+        bits = []
+        if product is not None:
+            bits.append(f"商品 ¥{Decimal(product) / 100:.2f}")
+        if delivery:
+            bits.append(f"配送 ¥{Decimal(delivery) / 100:.2f}")
+        if packing:
+            bits.append(f"打包 ¥{Decimal(packing) / 100:.2f}")
+        if not bits:
+            return ""
+        return "实付构成：" + " + ".join(bits) + "（以官方页面为准）"
 
 
 @dataclass
@@ -217,6 +239,17 @@ def attach_quoted_prices(
         quoted = table.get(key)
         if quoted is not None:
             cand.quoted_price = quoted
+            # 实测外送场景 price 含配送与打包费，需向用户说明构成
+            try:
+                from collector import LAST_BREAKDOWNS
+                fb = LAST_BREAKDOWNS.get(key)
+                if fb:
+                    cand.fee_breakdown = fb
+                    note = cand.fee_note()
+                    if note:
+                        cand.reasons.append(note)
+            except Exception:
+                pass  # 费用构成是增强信息，取不到不影响主流程
             if cand.coupon is not None:
                 cand.reasons.append("已通过 calculate-price 真实核价")
         else:

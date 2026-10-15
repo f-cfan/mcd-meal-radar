@@ -1,0 +1,91 @@
+{
+  "_source": "麦当劳官方 MCP · delivery-query-stores（实测 2026-10-15）",
+  "_params": {
+    "addressId": "1036496150091134639482044225",
+    "beType": 2
+  },
+  "_note": "data 是数组，不是 {stores:[...]}。beCode 外送场景必填。已脱敏地址。",
+  "success": true,
+  "code": 200,
+  "datetime": "2026-10-15 21:20:55",
+  "data": [
+    {
+      "storeCode": "1400649",
+      "beCode": "140064902",
+      "storeName": "麦当劳广州富港大厦餐厅",
+      "reservation": true,
+      "reservationTimeOptions": [
+        {
+          "date": "2026-10-15",
+          "today": true,
+          "reservationOptionText": "夜市(17:30至23:59)"
+        },
+        {
+          "date": "2026-10-16",
+          "today": false,
+          "reservationOptionText": "夜市(00:00至00:29,00:30至05:29,17:30至23:59)，早餐(05:30至10:59)，午餐(11:00至14:59)，下午茶(15:00至17:29)"
+        },
+        {
+          "date": "2026-10-17",
+          "today": false,
+          "reservationOptionText": "夜市(00:00至00:29,00:30至05:29,17:30至23:59)，早餐(05:30至10:59)，午餐(11:00至14:59)，下午茶(15:00至17:29)"
+        }
+      ],
+      "businessStatus": true,
+      "businessStartTime": "00:00",
+      "businessEndTime": "23:59"
+    },
+    {
+      "storeCode": "1400999",
+      "beCode": "140099902",
+      "storeName": "麦当劳广州中山大道德胜汇餐厅",
+      "reservation": true,
+      "reservationTimeOptions": [
+        {
+          "date": "2026-10-15",
+          "today": true,
+          "reservationOptionText": "夜市(17:30至23:59)"
+        },
+        {
+          "date": "2026-10-16",
+          "today": false,
+          "reservationOptionText": "夜市(00:00至00:29,17:30至23:59)，早餐(07:30至10:59)，午餐(11:00至14:59)，下午茶(15:00至17:29)"
+        },
+        {
+          "date": "2026-10-17",
+          "today": false,
+          "reservationOptionText": "夜市(00:00至00:29,17:30至23:59)，早餐(07:30至10:59)，午餐(11:00至14:59)，下午茶(15:00至17:29)"
+        }
+      ],
+      "businessStatus": true,
+      "businessStartTime": "07:00",
+      "businessEndTime": "23:59"
+    },
+    {
+      "storeCode": "1400542",
+      "beCode": "140054202",
+      "storeName": "麦当劳广州美林餐厅",
+      "reservation": true,
+      "reservationTimeOptions": [
+        {
+          "date": "2026-10-15",
+          "today": true,
+          "reservationOptionText": "夜市(17:30至23:59)"
+        },
+        {
+          "date": "2026-10-16",
+          "today": false,
+          "reservationOptionText": "夜市(00:00至01:30,17:30至23:59)，早餐(08:00至10:59)，午餐(11:00至14:59)，下午茶(15:00至17:29)"
+        },
+        {
+          "date": "2026-10-17",
+          "today": false,
+          "reservationOptionText": "夜市(00:00至01:30,17:30至23:59)，早餐(08:00至10:59)，午餐(11:00至14:59)，下午茶(15:00至17:29)"
+        }
+      ],
+      "businessStatus": true,
+      "businessStartTime": "07:30",
+      "businessEndTime": "01:00"
+    }
+  ]
+}

@@ -15,9 +15,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
+from datetime import date as _date
 from decimal import Decimal
 from typing import Any
 
@@ -27,6 +29,30 @@ PROTOCOL_VERSION = "2025-06-18"
 # 官方错误码：仅两个
 ERR_TOKEN_INVALID = 401  # Token 无效 / 过期 / 未提供
 ERR_RATE_LIMITED = 429  # 超过 600 次/分钟
+
+
+def load_dotenv(path: str = ".env") -> None:
+    """把 .env 载入 os.environ。
+
+    不覆盖已存在的环境变量 —— 系统环境变量优先级高于 .env。
+    必须在任何模块读取 MCD_MCP_TOKEN 之前调用。
+    """
+    if not os.path.exists(path):
+        return
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
+# 导入即加载，保证后续任何模块都能读到 MCP Token
+load_dotenv()
 
 
 class MCPError(RuntimeError):
@@ -146,6 +172,7 @@ class Store:
     distance_km: Decimal | None = None
     address: str | None = None
     has_party: bool = False
+    be_code: str | None = None          # 实测：外送场景必填，菜单与计价都依赖它
 
 
 @dataclass
@@ -200,9 +227,41 @@ def parse_meals(payload: dict, scene: str) -> list[MenuItem]:
 
 
 def parse_price(payload: dict) -> Money:
-    """calculate-price 响应 → Money（分 → 元）。"""
+    """calculate-price 响应 → Money（分 → 元）。
+
+    ⚠️ 实测（2026-10-15）：`price` 是**含配送与打包费的应付总额**，
+    `productPrice` 只是商品小计。外送场景两者不同：
+
+        productPrice  = 3690   # 商品小计 ¥36.90
+        deliveryPrice = 600    # 配送费 ¥6.00
+        packingPrice  = 190    # 打包费 ¥1.90
+        price         = 4480   # 应付 ¥44.80
+
+    邮件里报给用户的应是 `price`（实付总额），但要标注配送与打包构成，
+    否则用户会看到一个和菜单标价不一样的数字而困惑。
+
+    返回值带 breakdown 供上层说明构成。Simple NamedTuple 保持可比较。
+    """
     data = (payload or {}).get("data") or {}
+    if not data:
+        return Money(Decimal(0))
     return cents_to_yuan(data.get("price", 0))
+
+
+def parse_price_breakdown(payload: dict) -> dict[str, int | None]:
+    """calculate-price 响应 → 费用构成（原始「分」值）。
+
+    用于邮件中说明「实付 ¥44.80 = 商品 ¥36.90 + 配送 ¥6.00 + 打包 ¥1.90」。
+    """
+    data = (payload or {}).get("data") or {}
+    return {
+        "total": data.get("price"),
+        "product": data.get("productPrice"),
+        "delivery": data.get("deliveryPrice"),
+        "packing": data.get("packingPrice"),
+        "discount": data.get("discount"),
+        "original": data.get("originalPrice"),
+    }
 
 
 def parse_coupons(payload: dict, store_scoped: bool = False) -> list[Coupon]:
@@ -228,37 +287,241 @@ def parse_coupons(payload: dict, store_scoped: bool = False) -> list[Coupon]:
 
 
 def parse_nutrition_list(payload: dict) -> dict[str, Nutrition]:
-    """list-nutrition-foods 响应 → {商品编码: Nutrition}。
+    """list-nutrition-foods 响应 → {商品名称: Nutrition}。
 
-    官方数据常缺字段。缺失一律保留 None，业务层据此显示「未核实」，
-    绝不用 0 冒充「不含」。
+    ⚠️ 实测（2026-10-15）：官方返回的**不是 JSON**，而是 DSL 字符串：
+        "[160]{productName,nutritionDescription,energyKj,energyKcal,protein,
+         fat,carbohydrate,sodium,calcium}:\n  猪柳麦满分,null,1288,308,16,16,24,781,213\n  ..."
+
+    营养表**不含商品编码**，只能按 productName 与菜单名称关联。
+
+    为便于离线 demo，本函数**同时接受**两种形态：
+      1. 真实形态：data 是含「{...}:」表头的 DSL 字符串
+      2. 离线形态：data 是 {"foods": [{productName, energyKcal, ...}]} 结构
+    两者产出的结果一致，所以 demo 与线上跑的是同一套逻辑。
+
+    官方数据本身字段不全，缺失一律保留 None；表里的数字 0 是真实值，需保留。
     """
-    data = (payload or {}).get("data") or {}
-    rows = data.get("foods") or data.get("list") or []
+    dsl: str | None = None
+    rows: list[dict] = []
+
+    if isinstance(payload, dict):
+        raw = payload.get("data")
+        if isinstance(raw, str) and "{" in raw:
+            dsl = raw
+        elif isinstance(raw, str) and raw.strip().startswith("["):
+            dsl = raw
+        elif isinstance(raw, dict):
+            rows = raw.get("foods") or raw.get("list") or []
+        elif raw is None and isinstance(payload.get("foods"), list):
+            # 离线 fixture 形态：顶层就是 {foods:[...]}，没有 data 包装层
+            rows = payload.get("foods") or []
+
+    # ---- 形态 1：真实 DSL ----
+    if dsl is not None:
+        header_match = re.search(r"\{([^}]*)\}", dsl)
+        if not header_match:
+            return {}
+        fields = [f.strip() for f in header_match.group(1).split(",")]
+        body = dsl[header_match.end():].lstrip(":").lstrip("\n")
+        for line in body.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split(",")
+            if len(parts) < len(fields):
+                continue
+            rows.append(dict(zip(fields, parts)))
+
+    # ---- 形态 2：离线 JSON（字段名与 DSL 一致，兼容旧写法）----
     out: dict[str, Nutrition] = {}
     for row in rows:
-        code = str(row.get("code") or row.get("foodCode") or "")
-        if not code:
+        if not isinstance(row, dict):
             continue
 
-        def pick(*names: str) -> int | None:
-            for n in names:
-                if row.get(n) is not None:
-                    try:
-                        return int(float(row[n]))
-                    except (TypeError, ValueError):
-                        return None
+        def num(*keys: str) -> int | None:
+            for k in keys:
+                v = row.get(k)
+                if v is None or v == "" or v == "null":
+                    continue
+                try:
+                    return int(float(v))
+                except (TypeError, ValueError):
+                    return None
             return None
 
-        out[code] = Nutrition(
-            kcal=pick("energy", "kcal", "calories"),
-            protein_g=pick("protein", "proteinG"),
-            fat_g=pick("fat", "fatG"),
-            carb_g=pick("carbohydrate", "carb", "carbG"),
-            sodium_mg=pick("sodium", "sodiumMg"),
-            calcium_mg=pick("calcium", "calciumMg"),
+        name = str(row.get("productName") or row.get("name") or "").strip()
+        if not name:
+            continue
+        out[name] = Nutrition(
+            kcal=num("energyKcal", "kcal", "energy", "calories"),
+            protein_g=num("protein", "proteinG"),
+            fat_g=num("fat", "fatG"),
+            carb_g=num("carbohydrate", "carb", "carbG"),
+            sodium_mg=num("sodium", "sodiumMg"),
+            calcium_mg=num("calcium", "calciumMg"),
         )
     return out
+
+
+def normalize_name(name: str) -> str:
+    """菜名归一化，用于营养表与菜单的名称联表。
+
+    ⚠️ 实测（2026-10-15）官方两张表用的命名体系不同：
+      · 营养表 `list-nutrition-foods` 是**标准单品名** —— 中薯条 / 麦乐鸡5块 / 猪柳蛋麦满分
+      · 菜单   `query-meals`          是**套餐与联名商品** —— 龙焰鸡腿堡四件套 / 蓝莓爆爆珠麦旋风
+
+    两者交集很小，且官方**没有提供套餐到单品的成分映射**。
+    因此本函数只做保守归一化（去空格、去营销修饰、规格词统一），
+    **不做模糊猜测**。匹配不上的编码保持无营养数据，
+    邮件中显示「营养未提供」—— 绝不按 0 或估算值填充。
+    """
+    s = (name or "").strip()
+    # 去掉规格括号，如「鸡肉汉堡随心选单人餐（麦金卡免配）」
+    s = re.sub(r"[（(][^）)]*[）)]", "", s)
+    # 去掉常见营销修饰
+    for token in ("新品", "上新", "限定", "联名", "同款", "超值", "特惠"):
+        s = s.replace(token, "")
+    # 规格词归一：小/中/大 → 小份/中份/大份
+    s = s.replace("小薯条", "小份薯条").replace("中薯条", "中份薯条").replace("大薯条", "大份薯条")
+    # 麦乐鸡 N 块 → 麦乐鸡N块（去空格）
+    s = re.sub(r"麦乐鸡\s*(\d+)\s*块", r"麦乐鸡\1块", s)
+    # 去掉中英文引号差异
+    s = s.replace("“", "").replace("”", "").replace('"', "")
+    return re.sub(r"\s+", "", s)
+
+
+def build_nutrition_by_code(menu: list[MenuItem], by_name: dict[str, Nutrition]) -> dict[str, Nutrition]:
+    """按名称把营养表联到菜单商品编码上。
+
+    官方营养表无编码，只能靠名称匹配。**匹配不上的编码不写入**，
+    上层据此显示「营养未提供」，绝不按 0 或估算值处理 —— 这是本项目的核心纪律之一。
+
+    实测命中率约 26/134，因为营养表只覆盖标准单品而菜单以套餐为主。
+    这是官方数据缺口，不是本项目的缺陷，因此如实展示而不掩盖。
+    """
+    normalized = {normalize_name(n): nutr for n, nutr in by_name.items()}
+    out: dict[str, Nutrition] = {}
+    for item in menu:
+        direct = by_name.get(item.name.strip())
+        if direct:
+            out[item.code] = direct
+            continue
+        fuzzed = normalized.get(normalize_name(item.name))
+        if fuzzed:
+            out[item.code] = fuzzed
+    return out
+
+
+def parse_points(payload: dict) -> int | None:
+    """query-my-account 响应 → 可用积分数。
+
+    ⚠️ 实测字段名为 availablePoint（不是 available），且是**字符串**、单位为「分」
+    （实测返回 "169.7"，即 169.7 积分）。此处取整数部分，保持可用性。
+    """
+    data = (payload or {}).get("data") or {}
+    raw = data.get("availablePoint") or data.get("available")
+    if raw is None:
+        return None
+    try:
+        return int(float(raw))
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_stores(payload: dict) -> list[Store]:
+    """delivery-query-stores / query-nearby-stores 响应 → Store 列表。
+
+    ⚠️ 实测 data 是**数组**（不是 {stores:[...]}），字段名为 storeName / storeCode /
+    beCode / reservation / businessStatus。beCode 在外送场景是必填项。
+    """
+    data = (payload or {}).get("data")
+    if isinstance(data, dict):
+        data = data.get("stores") or data.get("list") or []
+    if not isinstance(data, list):
+        return []
+
+    out: list[Store] = []
+    for raw in data:
+        dist = raw.get("distance")
+        try:
+            distance = Decimal(str(dist)) if dist is not None else None
+        except Exception:
+            distance = None
+        out.append(Store(
+            store_code=str(raw.get("storeCode") or ""),
+            name=raw.get("storeName") or raw.get("name") or "",
+            distance_km=distance,
+            address=raw.get("address"),
+            has_party=bool(raw.get("reservation")),
+            be_code=(str(raw.get("beCode")) if raw.get("beCode") else None),
+        ))
+    return out
+
+
+def parse_campaign_titles(payload: dict) -> list[str]:
+    """campaign-calendar 响应 → **进行中与未来**的活动标题。
+
+    ⚠️ 实测（2026-10-15）：该工具返回的是**人读 Markdown 文本**（放在 data
+    为 None、真实内容落在 `_text` 里），结构为：
+
+        ### 当前时间：2026-10-15 21:21:46
+        ### 活动列表：
+        #### 2026年10月12日 往期回顾
+        -   **活动标题**：超值9.9元早餐两件套陪你开工啦
+        #### 2026年10月20日
+        -   **活动标题**：某进行中活动
+
+    只有**标题行带 `**活动标题**` 前缀**，日期行以 `#### ` 开头，
+    带「往期回顾」标记的日期段属于历史活动，**必须排除** —— 否则会把
+    已结束的活动当作「当前活动」推给用户。
+
+    官方未给结构化状态字段，所以这里按「往期回顾」标记做过滤，
+    这是实测唯一可靠的判别依据。
+    """
+    text = payload.get("_text") if isinstance(payload, dict) else None
+    if not text:
+        data = (payload or {}).get("data")
+        if isinstance(data, str):
+            text = data
+        elif isinstance(data, dict):
+            cands = data.get("campaigns") or data.get("list")
+            if isinstance(cands, list):
+                return [str(c.get("title", "")) for c in cands
+                        if isinstance(c, dict) and c.get("title")]
+            text = json.dumps(data, ensure_ascii=False)
+    if not text:
+        return []
+
+    titles: list[str] = []
+    current_date = None
+    today = _date.today()
+
+    for line in text.splitlines():
+        stripped = line.strip()
+
+        # 日期分节
+        if stripped.startswith("####"):
+            m = re.match(r"^####\s*(\d{4})年(\d{1,2})月(\d{1,2})日", stripped)
+            if m:
+                current_date = _date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+            else:
+                current_date = None
+            continue
+
+        # 只认标题行，且必须属于「今天或未来」的日期段
+        m = re.match(r"^-\s+\*\*活动标题\*\*\s*[:：]\s*(.+?)\s*$", stripped)
+        if not m:
+            continue
+        if current_date is None or current_date < today:
+            continue  # 往期不推给用户
+
+        title = re.sub(r"\*\*", "", m.group(1)).strip()
+        if title:
+            titles.append(title)
+
+    seen: set[str] = set()
+    return [t for t in titles if not (t in seen or seen.add(t))]
 
 
 def build_create_order_params(
@@ -324,7 +587,15 @@ class McdMcpClient:
         }
 
     def call_tool(self, name: str, args: dict | None = None) -> dict:
-        """调用一个 MCP Tool。Token 失效时抛 TokenExpired，供上层降级。"""
+        """调用一个 MCP Tool。Token 失效时抛 TokenExpired，供上层降级。
+
+        ⚠️ 实测发现（2026-10-15，重要）：
+        官方返回**不是**干净 JSON，而是 MCP 标准 content[].text 包装 —— 文本里
+        先有人类可读的字段说明 + Markdown，末尾才跟一段 `## Original Response`
+        后的原始 JSON。**部分工具**（如 list-nutrition-foods）甚至返回 DSL 表格而非 JSON。
+
+        本方法自动拆包出结构化 payload 返回；解析不出时返回 {"_text": 原始文本}。
+        """
         if not self.configured:
             raise TokenExpired("未配置 MCD_MCP_TOKEN", ERR_TOKEN_INVALID)
 
@@ -361,7 +632,42 @@ class McdMcpClient:
         data = json.loads(text)
         if "error" in data:
             raise MCPError(str(data["error"]))
-        return data.get("result", {})
+        result = data.get("result", {})
+        return self.unwrap(result)
+
+    @staticmethod
+    def unwrap(result: dict) -> dict:
+        """从 content[].text 包装中拆出结构化 payload。
+
+        实测的响应形态（2026-10-15）：
+          {"content": [{"type": "text", "text": "…字段说明…\\n## Original Response\\n{JSON}"}]}
+        其中 {JSON} 本身还可能是字符串化的 DSL（如营养表格），此处原样保留。
+        """
+        content = result.get("content")
+        if not content or not isinstance(content, list):
+            return result
+
+        first = content[0]
+        text = first.get("text", "") if isinstance(first, dict) else str(first)
+        if not text:
+            return result
+
+        # 从后往前找最后一个平衡的 JSON 对象 —— 字段说明里也可能有 {
+        start = text.rfind('{"success"')
+        if start < 0:
+            start = text.rfind('{"')
+        if start < 0:
+            return {"_text": text}
+
+        segment = text[start:]
+        for end in range(len(segment), 0, -1):
+            if segment[end - 1] != "}":
+                continue
+            try:
+                return json.loads(segment[:end])
+            except json.JSONDecodeError:
+                continue
+        return {"_text": text}
 
 
 def load_fixture(name: str, fixture_dir: str) -> dict:

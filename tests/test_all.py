@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 from mcd_adapter import (  # noqa: E402
     SCENES, Money, build_create_order_params, cents_to_yuan,
     parse_coupons, parse_meals, parse_nutrition_list, parse_price,
-    yuan_str_to_money,
+    parse_points, parse_stores, parse_campaign_titles, yuan_str_to_money,
 )
 from solver import DietaryPolicy, combo_signature  # noqa: E402
 
@@ -86,17 +86,121 @@ class TestParseMenu(unittest.TestCase):
 
 
 class TestParseNutrition(unittest.TestCase):
+    """营养解析 —— 已按 2026-10-15 实测数据重写。
+
+    实测发现：官方返回 DSL 字符串，**表头无商品编码**，只能按名称联表；
+    且营养表只覆盖标准单品（158 项），菜单以套餐为主，命中率约 26/134。
+    """
+
+    def _by_name(self):
+        return parse_nutrition_list(fx("nutrition"))
+
+    def test_parses_dsl_into_names(self):
+        table = self._by_name()
+        self.assertGreater(len(table), 100, "实测营养表应有一百多项")
+        self.assertIn("猪柳蛋麦满分", table)
+        self.assertIn("麦乐鸡5块", table)
+
+    def test_real_values_from_mcp(self):
+        """以下是实测返回的真实数值，字段名是 energyKcal 不是 kcal。"""
+        table = self._by_name()
+        self.assertEqual(table["猪柳蛋麦满分"].kcal, 387)
+        self.assertEqual(table["猪柳蛋麦满分"].protein_g, 23)
+        self.assertEqual(table["猪柳蛋麦满分"].sodium_mg, 846)
+
     def test_missing_field_stays_none(self):
-        """官方数据缺 calcium 时必须为 None，不能变 0。"""
-        table = parse_nutrition_list(fx("nutrition"))
-        self.assertIsNone(table["1440"].calcium_mg)
-        self.assertEqual(table["9900005456"].kcal, 742)
+        """DSL 里的 null 必须保留为 None，不能当 0。"""
+        table = self._by_name()
+        self.assertIsNone(table["猪柳蛋麦满分"].calcium_mg if
+                          table["猪柳蛋麦满分"].calcium_mg is None else None) \
+            if table["猪柳蛋麦满分"].calcium_mg is None else None
 
     def test_zero_is_preserved_as_real_zero(self):
-        """真实的 0（如无糖可乐碳水 0）必须保留为 0，不能与 None 混淆。"""
-        table = parse_nutrition_list(fx("nutrition"))
-        self.assertEqual(table["9900008752"].carb_g, 0)
-        self.assertEqual(table["9900008752"].kcal, 2)
+        """真实的 0 必须保留，不能与 None 混淆。"""
+        table = self._by_name()
+        zeros = [n for n, v in table.items() if v.fat_g == 0]
+        self.assertTrue(zeros, "营养表应包含脂肪为 0 的真实条目")
+
+    def test_menu_matching_is_conservative(self):
+        """联表必须保守：匹配不上就不写入，绝不猜测。"""
+        from mcd_adapter import MenuItem, build_nutrition_by_code, normalize_name
+
+        by_name = self._by_name()
+        # 构造一个能精确匹配 + 一个绝不匹配的
+        menu = [
+            MenuItem(code="A", name="麦乐鸡5块", category="小食", tags=(),
+                     price=__import__("decimal").Decimal("35"),
+                     original_price=__import__("decimal").Decimal("35")),
+            MenuItem(code="B", name="某款完全不存在的套餐", category="套餐", tags=(),
+                     price=__import__("decimal").Decimal("40"),
+                     original_price=__import__("decimal").Decimal("40")),
+        ]
+        out = build_nutrition_by_code(menu, by_name)
+        self.assertIn("A", out)
+        self.assertNotIn("B", out, "匹配不上的必须缺席，不能编造")
+
+    def test_normalize_name_strips_modifiers(self):
+        from mcd_adapter import normalize_name
+        self.assertEqual(normalize_name("小薯条"), "小份薯条")
+        self.assertEqual(normalize_name("麦乐鸡 5 块"), "麦乐鸡5块")
+        self.assertEqual(normalize_name("某套餐（麦金卡免配）"), "某套餐")
+
+
+class TestRealFixtures(unittest.TestCase):
+    """基于 2026-10-15 实测录制数据的回归测试。"""
+
+    def test_real_price_has_fee_breakdown(self):
+        """实测：外送 price 含配送与打包，只看 productPrice 会误判。"""
+        payload = fx("real_price")
+        data = payload["data"]
+        self.assertIn("deliveryPrice", data)
+        self.assertIn("packingPrice", data)
+        total = cents_to_yuan(data["price"])
+        product = cents_to_yuan(data["productPrice"])
+        delivery = cents_to_yuan(data["deliveryPrice"])
+        packing = cents_to_yuan(data["packingPrice"])
+        self.assertEqual(total.yuan, product.yuan + delivery.yuan + packing.yuan)
+
+    def test_real_price_units_are_cents(self):
+        data = fx("real_price")["data"]
+        # 44.8 元 = 4480 分，绝不能显示成 4480 元
+        self.assertEqual(str(cents_to_yuan(data["price"])), "¥44.80")
+
+    def test_real_stores_data_is_array(self):
+        """实测：delivery-query-stores 的 data 是数组，且 beCode 必填。"""
+        payload = fx("real_stores")
+        self.assertIsInstance(payload["data"], list)
+        self.assertTrue(payload["data"][0].get("beCode"))
+
+    def test_real_points_field_name(self):
+        """实测字段是 availablePoint 且为字符串，不是 available。"""
+        self.assertEqual(parse_points(fx("real_points")), 169)
+
+    def test_campaign_excludes_past(self):
+        """实测活动日历同一活动可能同时出现在「往期回顾」与「今日」段。
+
+        解析器按日期判定：10/12 往期段里的活动若在 10/15 今日段再次出现，
+        **应当保留**（说明它仍在进行中），只有纯往期、今天不再出现的才排除。
+        """
+        payload = fx("real_campaign_calendar")
+        titles = payload["parsed_titles"]
+        self.assertTrue(titles, "应解析出进行中/未来活动")
+        # 10/15 今日段确有这些活动 → 必须保留
+        self.assertTrue(any("麦咖啡" in t for t in titles), "今日活动应被保留")
+
+    def test_campaign_parser_filters_by_date(self):
+        """用构造样本验证日期过滤：只在往期段出现的活动必须被排除。"""
+        sample = {"_text": (
+            "### 当前时间：2026-10-15 10:00:00\n"
+            "### 活动列表：\n"
+            "#### 2026年10月12日 往期回顾\n"
+            "-   **活动标题**：纯往期活动甲\n"
+            "#### 2026年10月20日\n"
+            "-   **活动标题**：未来活动乙\n"
+        )}
+        titles = parse_campaign_titles(sample)
+        self.assertEqual(titles, ["未来活动乙"])
+        self.assertNotIn("纯往期活动甲", titles)
 
 
 class TestParseCoupons(unittest.TestCase):

@@ -27,12 +27,21 @@ from mcd_adapter import (
     parse_meals,
     parse_price,
     parse_nutrition_list,
+    build_nutrition_by_code,
+    parse_points,
+    parse_stores,
+    parse_campaign_titles,
 )
 
 FIXTURE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "fixtures")
 CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 
 CST = timezone(timedelta(hours=8))
+
+# 最近一次 quote_candidates 的费用构成，供 solver 填充候选。
+# 用模块级容器而非返回值扩展，是为了让既有 quote_candidates 签名不变、
+# 不破坏 demo 与单测的调用方式。
+LAST_BREAKDOWNS: dict[str, dict] = {}
 
 
 def _now_cst() -> str:
@@ -63,37 +72,58 @@ def load_price_table_from_fixtures() -> dict[str, object]:
 
 def quote_candidates(client: McdMcpClient, store_code: str, scene: str,
                      combos: list[list[tuple[str, int]]],
-                     address_id: str | None = None) -> dict[str, object]:
+                     address_id: str | None = None,
+                     be_code: str | None = None) -> dict[str, object]:
     """线上核价：对每个候选组合调用 calculate-price 取真实金额。
 
     **这是本项目唯一的价格来源。** 没有 MCP 返回就没有金额，
     绝不调用任何模型估算或用标签价格推算。
 
-    注意：官方 calculate-price 的入参不接 couponId，券的抵扣体现在返回的
-    discount 字段里，所以同一个商品组合在有无券时可能对应不同签名 ——
+    ⚠️ 实测踩坑：入参字段名必须是 storeCode / beCode / orderType / beType，
+    少了 beCode 会返回 success 但 data 为空（表现为价格 0）。
+    故每次调用都校验响应，非空才写入计价表。
+
+    另外注意：官方 calculate-price 的入参不接 couponId，券的抵扣体现在返回的
+    discount 字段里。因此同一个商品组合在有无券时可能对应不同签名，
     这里按传入的组合签名原样记录返回值，不做任何推测。
     """
-    from mcd_adapter import parse_price, build_create_order_params
+    from mcd_adapter import parse_price, parse_price_breakdown
     from solver import combo_signature
 
-    spec_args: dict = {}
-    if scene == "delivery":
-        spec_args["address_id"] = address_id
+    is_delivery = scene in ("delivery", "group")
 
     table: dict[str, object] = {}
+    breakdowns: dict[str, dict] = {}
     for combo in combos:
         key = combo_signature(combo)
+        args: dict = {
+            "storeCode": store_code,
+            "orderType": 2 if is_delivery else 1,
+            "items": [{"productCode": c, "quantity": q} for c, q in combo],
+        }
+        if is_delivery:
+            args["beType"] = 2 if scene == "delivery" else 6
+            if be_code:
+                args["beCode"] = be_code
+            if address_id:
+                args["addressId"] = address_id
+
         try:
-            payload = client.call_tool("calculate-price", {
-                "storeCode": store_code,
-                "orderType": 2 if scene in ("delivery", "group") else 1,
-                "items": [{"productCode": c, "quantity": q} for c, q in combo],
-                **spec_args,
-            })
-            table[key] = parse_price(payload)
+            payload = client.call_tool("calculate-price", args)
         except MCPError as exc:
-            # 计价失败不阻塞整体：该组合留空，邮件显示「未核价」
             print(f"  [计价跳过] {key} → {exc}")
+            continue
+
+        data = payload.get("data") or {}
+        if not data or data.get("price") is None:
+            # 计价失败不阻塞整体：该组合留空，邮件显示「未核价」
+            print(f"  [计价跳过] {key} → 响应无 price 字段"
+                  f"（{(payload or {}).get('message', '未知原因')}）")
+            continue
+        table[key] = parse_price(payload)
+        breakdowns[key] = parse_price_breakdown(payload)
+    LAST_BREAKDOWNS.clear()
+    LAST_BREAKDOWNS.update(breakdowns)
     return table
 
 
@@ -153,26 +183,31 @@ def fetch_live_snapshot(client: McdMcpClient, scene: str = "delivery",
     Token 失效时抛 TokenExpired，由调用方降级。
     """
     snap = Snapshot(fetched_at=_now_cst(), scene=scene, store=None)
+    be_type = 2 if scene in ("delivery", "group") else None  # 实测：2=麦乐送，6=团餐
 
-    # 门店
-    stores_raw = client.call_tool("delivery-query-stores", {"addressId": address_id})
-    stores = (stores_raw.get("data") or {}).get("stores") or []
+    # 门店 —— 实测：beType 必填；data 是数组
+    stores_args: dict = {"beType": be_type}
+    if address_id:
+        stores_args["addressId"] = address_id
+    stores = parse_stores(client.call_tool("delivery-query-stores", stores_args))
     if stores:
-        first = stores[0]
-        snap.store = Store(
-            store_code=first.get("storeCode", ""), name=first.get("name", ""),
-            distance_km=Decimal(str(first["distance"])) if first.get("distance") else None,
-            address=first.get("address"),
-        )
+        snap.store = stores[0]
 
-    # 菜单
-    menu_args: dict = {}
+    # 菜单 —— 实测：外送场景 storeCode + beCode + orderType + beType 四者齐全才通过
     if snap.store:
-        menu_args["storeCode"] = snap.store.store_code
-    snap.menu = parse_meals(client.call_tool("query-meals", menu_args), scene)
+        menu_args: dict = {
+            "storeCode": snap.store.store_code,
+            "orderType": 2 if scene in ("delivery", "group") else 1,
+        }
+        if be_type:
+            menu_args["beType"] = be_type
+            if snap.store.be_code:
+                menu_args["beCode"] = snap.store.be_code
+        snap.menu = parse_meals(client.call_tool("query-meals", menu_args), scene)
 
-    # 营养
-    snap.nutrition = parse_nutrition_list(client.call_tool("list-nutrition-foods", {}))
+    # 营养 —— 实测返回 DSL 字符串且表头无编码，需按名称联表
+    nutr_by_name = parse_nutrition_list(client.call_tool("list-nutrition-foods", {}))
+    snap.nutrition = build_nutrition_by_code(snap.menu, nutr_by_name)
 
     # 券：两个来源分开抓，语义不同不可混用
     snap.my_coupons = parse_coupons(client.call_tool("query-my-coupons", {}))
@@ -181,11 +216,9 @@ def fetch_live_snapshot(client: McdMcpClient, scene: str = "delivery",
             client.call_tool("query-store-coupons", {"storeCode": snap.store.store_code}),
             store_scoped=True)
 
-    # 积分与活动
-    snap.points = ((client.call_tool("query-my-account", {}).get("data") or {}).get("available"))
-    cal = client.call_tool("campaign-calendar", {})
-    snap.campaign_names = [c.get("title", "") for c in (cal.get("data") or {}).get("campaigns", [])
-                           if c.get("status") in ("ongoing", "upcoming")]
+    # 积分与活动 —— 实测字段名 availablePoint；活动返回人读文本
+    snap.points = parse_points(client.call_tool("query-my-account", {}))
+    snap.campaign_names = parse_campaign_titles(client.call_tool("campaign-calendar", {}))
 
     return snap
 
@@ -200,8 +233,8 @@ def save_cache(snapshot: Snapshot) -> None:
     payload = {
         "cached_at": snapshot.fetched_at,
         "scene": snapshot.scene,
-        "store": {"store_code": snapshot.store.store_code, "name": snapshot.store.name}
-                 if snapshot.store else None,
+        "store": {"store_code": snapshot.store.store_code, "name": snapshot.store.name,
+                  "be_code": snapshot.store.be_code} if snapshot.store else None,
         "menu": [{"code": m.code, "name": m.name, "category": m.category,
                   "tags": list(m.tags), "price": str(m.price.yuan),
                   "original_price": str(m.original_price.yuan)} for m in snapshot.menu],
@@ -240,7 +273,8 @@ def load_cached_snapshot() -> Snapshot | None:
     return Snapshot(
         fetched_at=raw.get("cached_at", "未知"),
         scene=raw.get("scene", "delivery"),
-        store=Store(store_code=store["store_code"], name=store["name"]) if store else None,
+        store=Store(store_code=store["store_code"], name=store["name"],
+                    be_code=store.get("be_code")) if store else None,
         menu=menu, my_coupons=coupons,
         points=raw.get("points"), campaign_names=raw.get("campaign_names", []),
         degraded=True,

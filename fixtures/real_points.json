@@ -1,0 +1,16 @@
+{
+  "_source": "麦当劳官方 MCP · query-my-account（实测 2026-10-15）",
+  "_note": "字段名是 availablePoint 不是 available；是字符串。accountId 已脱敏。",
+  "success": true,
+  "data": {
+    "availablePoint": "169.7",
+    "accumulativePoint": "6329.6",
+    "currency": "麦享会积分",
+    "currentMouthExpirePoint": "0",
+    "expiredPoint": "4118.9",
+    "frozenPoint": "0",
+    "lastMouthExpirePoint": "0",
+    "nextMouthExpirePoint": "0",
+    "usedPoint": "1426"
+  }
+}

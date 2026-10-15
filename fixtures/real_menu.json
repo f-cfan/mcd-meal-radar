@@ -1,0 +1,302 @@
+{
+  "_source": "麦当劳官方 MCP · query-meals（实测 2026-10-15）",
+  "_params": {
+    "storeCode": "1400649",
+    "beCode": "140064902",
+    "orderType": 2,
+    "beType": 2
+  },
+  "_store": "麦当劳广州富港大厦餐厅（1400649）",
+  "_note": "categories[].meals 只有 code+tags；名称与价格在 data.meals 中，需两处合并。",
+  "success": true,
+  "data": {
+    "categories": [
+      {
+        "name": "人气热卖",
+        "meals": [
+          {
+            "code": "9900016490",
+            "tags": [
+              "韩式辣椒黄油风味"
+            ]
+          },
+          {
+            "code": "521955"
+          },
+          {
+            "code": "9900016510",
+            "tags": [
+              "心形薯饼同款比心"
+            ]
+          },
+          {
+            "code": "9900016503",
+            "tags": [
+              "浓郁奶香拉丝芝士"
+            ]
+          },
+          {
+            "code": "9900016511",
+            "tags": [
+              "韩式芝士风味酱上新"
+            ]
+          },
+          {
+            "code": "9900010341"
+          },
+          {
+            "code": "521950"
+          }
+        ]
+      },
+      {
+        "name": "多人分享餐",
+        "meals": [
+          {
+            "code": "9900016510",
+            "tags": [
+              "心形薯饼同款比心"
+            ]
+          },
+          {
+            "code": "9900009882",
+            "tags": [
+              "超值"
+            ]
+          },
+          {
+            "code": "9900012938"
+          },
+          {
+            "code": "9900012999"
+          },
+          {
+            "code": "9900013002"
+          },
+          {
+            "code": "9900013004"
+          },
+          {
+            "code": "9900013006"
+          }
+        ]
+      },
+      {
+        "name": "麦金卡专享",
+        "meals": [
+          {
+            "code": "9900016507"
+          },
+          {
+            "code": "9900016508"
+          },
+          {
+            "code": "9900012810"
+          },
+          {
+            "code": "9900012807"
+          },
+          {
+            "code": "9900010341"
+          },
+          {
+            "code": "9900011071"
+          },
+          {
+            "code": "9900011822"
+          },
+          {
+            "code": "9900000590"
+          }
+        ]
+      }
+    ],
+    "meals": {
+      "9900016508": {
+        "name": "龙焰芝士棒鸡腿堡单人餐（麦金卡免配）",
+        "image": "https://menu-img.mcd.cn/pcm/prod/menu/ProductPool/product/MS_9900016508_320.png",
+        "currentPrice": "37.9",
+        "originalPrice": "68.5",
+        "discountType": "随单购麦金卡优惠",
+        "withOrder": {
+          "membershipCode": "106",
+          "specId": "880"
+        },
+        "canWithOrder": true
+      },
+      "9900016507": {
+        "name": "龙焰鸡腿堡单人餐（麦金卡免配）",
+        "image": "https://menu-img.mcd.cn/pcm/prod/menu/ProductPool/product/MS_9900016507_320.png",
+        "currentPrice": "34.9",
+        "originalPrice": "65.5",
+        "discountType": "随单购麦金卡优惠",
+        "withOrder": {
+          "membershipCode": "106",
+          "specId": "880"
+        },
+        "canWithOrder": true
+      },
+      "9900016503": {
+        "name": "龙焰芝士棒鸡腿堡四件套",
+        "image": "https://menu-img.mcd.cn/pcm/prod/menu/ProductPool/product/MS_9900016503_320.png",
+        "currentPrice": "39.9",
+        "originalPrice": "71.5",
+        "canWithOrder": false
+      },
+      "9900016510": {
+        "name": "“我就喜欢”鸡薯双全盒",
+        "image": "https://menu-img.mcd.cn/pcm/prod/menu/ProductPool/product/MS_9900016510_320.png",
+        "currentPrice": "15.9",
+        "originalPrice": "32",
+        "canWithOrder": false
+      },
+      "9900012938": {
+        "name": "快乐吃鸡双人餐",
+        "image": "https://menu-img.mcd.cn/pcm/prod/menu/ProductPool/product/MS_9900012938_320.png",
+        "currentPrice": "55.9",
+        "originalPrice": "88.5",
+        "canWithOrder": false
+      },
+      "9900012810": {
+        "name": "经典安格斯单人餐（麦金卡免配）",
+        "image": "https://menu-img.mcd.cn/pcm/prod/menu/20260824/product/MS_9900012810_320.gif",
+        "currentPrice": "43.9",
+        "originalPrice": "67",
+        "discountType": "随单购麦金卡优惠",
+        "withOrder": {
+          "membershipCode": "106",
+          "specId": "880"
+        },
+        "canWithOrder": true
+      },
+      "9900016490": {
+        "name": "龙焰鸡腿堡四件套",
+        "image": "https://menu-img.mcd.cn/pcm/prod/menu/ProductPool/product/MS_9900016490_320.png",
+        "currentPrice": "36.9",
+        "originalPrice": "68.5",
+        "canWithOrder": false
+      },
+      "9900000590": {
+        "name": "堡堡随心拼(7件任选)(麦金卡免配) ",
+        "image": "https://menu-img.mcd.cn/pcm/prod/menu/20260206/product/MS_9900000590_320.gif",
+        "currentPrice": "71",
+        "originalPrice": "79",
+        "discountType": "随单购麦金卡优惠",
+        "withOrder": {
+          "membershipCode": "106",
+          "specId": "880"
+        },
+        "canWithOrder": true
+      },
+      "9900013006": {
+        "name": "吃鸡盛宴四人餐",
+        "image": "https://menu-img.mcd.cn/pcm/prod/menu/ProductPool/product/MS_9900013006_320.png",
+        "currentPrice": "107",
+        "originalPrice": "193.5",
+        "canWithOrder": false
+      },
+      "9900013002": {
+        "name": "畅享吃鸡三人餐",
+        "image": "https://menu-img.mcd.cn/pcm/prod/menu/ProductPool/product/MS_9900013002_320.png",
+        "currentPrice": "86",
+        "originalPrice": "140.5",
+        "canWithOrder": false
+      },
+      "9900016511": {
+        "name": "蘸蘸炸鸡",
+        "image": "https://menu-img.mcd.cn/pcm/prod/menu/ProductPool/product/MS_9900016511_320.gif",
+        "currentPrice": "12.9",
+        "originalPrice": "19",
+        "canWithOrder": false
+      },
+      "9900013004": {
+        "name": "合家欢聚鸡牛三人餐",
+        "image": "https://menu-img.mcd.cn/pcm/prod/menu/ProductPool/product/MS_9900013004_320.png",
+        "currentPrice": "96",
+        "originalPrice": "159",
+        "canWithOrder": false
+      },
+      "9900011071": {
+        "name": "全明星双人分享餐8件套(多款主食任选)",
+        "image": "https://menu-img.mcd.cn/pcm/prod/menu/ProductPool/product/MS_9900011071_320.gif",
+        "currentPrice": "54.9",
+        "originalPrice": "115",
+        "discountType": "随单购麦金卡优惠",
+        "withOrder": {
+          "membershipCode": "106",
+          "specId": "880"
+        },
+        "canWithOrder": true
+      },
+      "521950": {
+        "name": "蓝莓爆爆珠麦旋风",
+        "image": "https://menu-img.mcd.cn/pcm/prod/menu/ProductPool/product/MS_521950_320.png",
+        "currentPrice": "16.5",
+        "originalPrice": "16.5",
+        "canWithOrder": false
+      },
+      "521955": {
+        "name": "麦当劳联名徽章",
+        "image": "https://menu-img.mcd.cn/pcm/prod/menu/20261014/product/MS_521955_320_4.png",
+        "currentPrice": "34.9",
+        "originalPrice": "39.9",
+        "discountType": "随单购麦金卡优惠",
+        "withOrder": {
+          "membershipCode": "106",
+          "specId": "880"
+        },
+        "canWithOrder": true
+      },
+      "9900012807": {
+        "name": "鱼牛汉堡随心选单人餐（麦金卡免配）",
+        "image": "https://menu-img.mcd.cn/pcm/prod/menu/20261008/product/MS_9900012807_320.gif",
+        "currentPrice": "38.4",
+        "originalPrice": "58.5",
+        "discountType": "随单购麦金卡优惠",
+        "withOrder": {
+          "membershipCode": "106",
+          "specId": "880"
+        },
+        "canWithOrder": true
+      },
+      "9900010341": {
+        "name": "鸡肉汉堡随心选单人餐（麦金卡免配）",
+        "image": "https://menu-img.mcd.cn/pcm/prod/menu/20261008/product/MS_9900010341_320.gif",
+        "currentPrice": "34.4",
+        "originalPrice": "50",
+        "discountType": "随单购麦金卡优惠",
+        "withOrder": {
+          "membershipCode": "106",
+          "specId": "880"
+        },
+        "canWithOrder": true
+      },
+      "9900009882": {
+        "name": "四拼小食餐",
+        "image": "https://menu-img.mcd.cn/pcm/prod/menu/20260306/product/MS_9900009882_320.png",
+        "currentPrice": "39.9",
+        "originalPrice": "59",
+        "canWithOrder": false
+      },
+      "9900011822": {
+        "name": "经典小食2件(麦金卡专享)",
+        "image": "https://menu-img.mcd.cn/pcm/prod/menu/20260603/product/MS_9900011822_320.png",
+        "currentPrice": "19.9",
+        "originalPrice": "29.5",
+        "discountType": "随单购麦金卡优惠",
+        "withOrder": {
+          "membershipCode": "106",
+          "specId": "880"
+        },
+        "canWithOrder": true
+      },
+      "9900012999": {
+        "name": "大吉大利吃鸡双人餐",
+        "image": "https://menu-img.mcd.cn/pcm/prod/menu/ProductPool/product/MS_9900012999_320.png",
+        "currentPrice": "73.9",
+        "originalPrice": "120",
+        "canWithOrder": false
+      }
+    }
+  }
+}
