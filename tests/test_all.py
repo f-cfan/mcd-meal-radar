@@ -949,12 +949,91 @@ class TestCareCopy(unittest.TestCase):
         self.assertEqual(current_meal_window(2), "dinner")
 
     def test_expiring_coupon_drives_copy(self):
-        """有券到期时，关怀应基于这个真实依据。"""
+        """券到期时，关怀应基于这个真实依据。"""
+        from mailer import CareContext, _care_line
+        today_title, _ = _care_line(CareContext(meal="lunch", hour=12,
+                                                expiring_today=2))
+        self.assertIn("2 张券", today_title)
+        self.assertIn("今天", today_title)
+
+    def test_soon_expiring_coupon_is_gentler(self):
+        """「几天内到期」不该用「今天就过期」的说法 —— 那是不准确。"""
+        from mailer import CareContext, _care_line
+        title, body = _care_line(CareContext(meal="lunch", hour=12,
+                                             expiring_coupon_count=2,
+                                             expiring_today=0))
+        self.assertIn("2 张券", title)
+        self.assertNotIn("今天", title,
+                         "还有 1~3 天的券说「今天过期」是不准确的提醒")
+        self.assertIn("不着急", body)
+
+    def test_today_expiry_takes_priority(self):
+        """今天到期比「几天内到期」更紧迫，文案应优先说它。"""
         from mailer import CareContext, _care_line
         title, _ = _care_line(CareContext(meal="lunch", hour=12,
-                                          expiring_coupon_count=2))
-        self.assertIn("2 张券", title)
-        self.assertIn("过期", title)
+                                          expiring_coupon_count=5,
+                                          expiring_today=1))
+        self.assertIn("今天", title)
+        self.assertNotIn("5 张", title, "应只说今天到期的 1 张，不混数")
+
+    def test_campaign_does_not_hijack_the_title(self):
+        """活动**不抢占关怀标题**。
+
+        早期版本让活动直接当标题，结果时段关怀完全被遮住 ——
+        而活动在邮件下方本来就有独立区块，重复说反而稀释了关怀。
+        现在活动只作为末尾的一句补充。
+        """
+        from mailer import CareContext, _care_line
+        plain_t, plain_b = _care_line(CareContext(meal="lunch", hour=12))
+        camp_t, camp_b = _care_line(CareContext(meal="lunch", hour=12,
+                                                campaign_count=5))
+        self.assertEqual(plain_t, camp_t, "有无活动不应改变关怀标题")
+        self.assertIn("门店", camp_b, "活动应作为补充信息出现")
+        self.assertTrue(camp_b.startswith(plain_b[:10]), "补充应在原正文之后")
+        self.assertGreater(len(camp_b), len(plain_b), "有活动时应多一句")
+
+    def test_late_night_copy_matches_actual_hour(self):
+        """凌晨 0~5 点不能说「今天辛苦了」—— 那一刻人还没结束这一天。
+
+        current_meal_window 把凌晨归到 dinner 只是**分类兜底**，
+        语气必须按真实时间给。
+        """
+        from mailer import CareContext, _care_line
+        for h in (0, 2, 4, 5):
+            title, body = _care_line(CareContext(meal="dinner", hour=h))
+            self.assertIn("还没睡", title,
+                          f"{h} 时不该用晚餐收尾的语气")
+            self.assertNotIn("今天辛苦了", title)
+            self.assertIn("休息", body)
+        # 边界：6 点已进入早餐时段
+        six = _care_line(CareContext(meal="breakfast", hour=6))[0]
+        self.assertNotIn("还没睡", six)
+
+    def test_weekend_copy_differs_from_weekday(self):
+        """周末该有周末的语气 —— 否则显得像模板。"""
+        from mailer import CareContext, _care_line
+        weekday = _care_line(CareContext(meal="dinner", hour=18, is_weekend=False))[0]
+        weekend = _care_line(CareContext(meal="dinner", hour=18, is_weekend=True))[0]
+        self.assertNotEqual(weekday, weekend, "周末文案不应与工作日相同")
+        self.assertIn("周末", weekend)
+
+    def test_warm_but_not_preachy_or_manipulative(self):
+        """温暖 ≠ 说教，也 ≠ 制造焦虑。
+
+        锁住三类越界：命令式、恐吓式、道德绑架式。
+        """
+        from mailer import CareContext, _care_line
+        harsh = ["必须", "一定要", "赶紧", "马上", "别再", "你的身体垮",
+                 "危害健康", "罚款", "后果自负", "你对不起"]
+        for meal in ("breakfast", "lunch", "tea", "dinner"):
+            for h in range(5, 24):
+                for kwargs in ({}, {"is_weekend": True}, {"expiring_coupon_count": 2},
+                               {"skipped_meals": 3}, {"campaign_count": 4}):
+                    title, body = _care_line(
+                        CareContext(meal=meal, hour=h, **kwargs))
+                    for word in harsh:
+                        self.assertNotIn(word, title + body,
+                                         f"{meal}/{h} 时文案过于说教：{word}")
 
     def test_skipped_meals_needs_evidence(self):
         """漏餐提示需要 skipped_meals 支撑 —— 无依据就不该说。"""
@@ -994,9 +1073,8 @@ class TestCareCopy(unittest.TestCase):
                         store=None, menu=[])
         html = render_digest(Decision(None, [], [], []), snap, "", "午间",
                              care=CareContext(meal="lunch", hour=12))
-        # 关怀正文含中文标点，直接子串匹配即可
-        self.assertIn("能扛住下午的", html)
-        self.assertIn("到饭点了", html)
+        self.assertIn("先把自己喂饱", html)
+        self.assertIn("到饭点啦", html)
 
     def test_no_care_block_when_not_provided(self):
         """没传关怀上下文时不应硬塞一个区块。"""
@@ -1006,7 +1084,7 @@ class TestCareCopy(unittest.TestCase):
         snap = Snapshot(fetched_at="2026-10-16 12:00:00", scene="delivery",
                         store=None, menu=[])
         html = render_digest(Decision(None, [], [], []), snap, "", "午间")
-        self.assertNotIn("能扛住下午的", html)
+        self.assertNotIn("先把自己喂饱", html)
 
 
 class TestPrefilter(unittest.TestCase):

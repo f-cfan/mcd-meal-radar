@@ -2,8 +2,11 @@
 
 > **100 个麦当劳 Skill 都在等你开口。只有这一个，每天饭点主动来找你。**
 
-每天 09:00 / 11:00 / 16:30 / 20:00，自动帮你**领券、算清这顿最省多少、盯住快过期的券**，
-然后发到你邮箱。基于麦当劳官方 MCP，**不猜价格、不代下单、不碰支付**。
+每天 09:00 / 11:00 / 16:30 / 20:00，先跟你说句话，再帮你**领券、算清这顿最省多少、
+盯住快过期的券**，然后发到你邮箱。基于麦当劳官方 MCP，**不猜价格、不代下单、不碰支付**。
+
+> 「今天还没顾上吃饭 —— 不催你，就是想让你知道，现在补一顿比空着撑到明天温柔得多。」
+> 「今天不容易吧。吃顿想热的，剩下的事明天再处理。」
 
 <div align="center">
 <img src="./assets/banner.svg" alt="麦麦饭点雷达 — 每天饭点主动来找你" width="100%">
@@ -11,6 +14,7 @@
 **↓ 这是它每天发给你的邮件（真实麦当劳 MCP 数据）↓**
 
 <img src="./assets/shots/email-digest.png" alt="午间建议邮件：推荐餐品、实付金额、营养数据、可叠加的券" width="420">
+<img src="./assets/shots/care-dinner.png" alt="晚间关怀邮件：按时段的温暖提醒 + 推荐与营养数据" width="420">
 <img src="./assets/shots/email-token-expired.png" alt="Token 失效时的降级邮件：主动告知并给出续授权步骤" width="420">
 
 <br>
@@ -18,7 +22,7 @@
 [![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?style=flat-square&logo=python&logoColor=white)](#快速体验30秒)
 [![deps](https://img.shields.io/badge/dependencies-0-3FB950?style=flat-square)](#快速体验30秒)
 [![Token](https://img.shields.io/badge/Token-不需要-blue?style=flat-square)](#快速体验30秒)
-[![tests](https://img.shields.io/badge/tests-88%20passed-3FB950?style=flat-square)](tests/test_all.py)
+[![tests](https://img.shields.io/badge/tests-94%20passed-3FB950?style=flat-square)](tests/test_all.py)
 [![MCP](https://img.shields.io/badge/MCP-33%20tools%20官方-DA291C?style=flat-square)](https://mcp.mcd.cn)
 [![License](https://img.shields.io/badge/License-MIT-FFC72C?style=flat-square)](./LICENSE)
 
@@ -40,7 +44,7 @@ python demo.py
 **真实 MCP 响应录制**，跑通四条链路：午间推荐 / 券过期提醒 / Token 失效降级 / 单位陷阱。
 
 ```bash
-python tests/test_all.py     # 88 个单测
+python tests/test_all.py     # 94 个单测
 ```
 
 ---
@@ -186,7 +190,7 @@ python tests/test_all.py
 | 真实营养 | ✅ **158 项**标准单品营养 |
 | 真实活动 | ✅ **16 个**进行中/未来活动 |
 | 真实积分 | ✅ `availablePoint` 读取成功 |
-| 单测 | **88 passed** |
+| 单测 | **94 passed** |
 
 **推荐结果为真实数据**：
 
@@ -451,7 +455,7 @@ mcd-meal-radar/
 │   ├── mailer.py            # 邮件渲染（HTML + 纯文本）
 │   └── mail.py              # 双通道推送（Agent Mail 优先 / SMTP 备选）
 ├── fixtures/                # 18 份响应样本（5 份真实调用录制）
-├── tests/test_all.py        # 88 个单测
+├── tests/test_all.py        # 94 个单测
 ├── assets/                  # Banner、架构图
 ├── docs/                    # 部署与提交清单
 ├── MCP_INTEGRATION.md       # MCP 集成说明与实测踩坑记录

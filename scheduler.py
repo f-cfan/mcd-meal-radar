@@ -126,8 +126,12 @@ def build_care_context(snapshot, slot, now=None) -> CareContext:
     meal = current_meal_window(now.hour)
 
     coupons = snapshot.store_coupons or snapshot.my_coupons
-    expiring = [c for c in coupons
-                if c.expires_in_days is not None and c.expires_in_days <= 1]
+    # 分两档统计：今天就到期（更紧迫）与 3 天内到期。
+    # ⚠️ expiresInDays == 0 按官方语义就是「今天到期」，不能和「还有 1 天」混为一谈 ——
+    # 否则会出现「说今天过期、实际还有 1 天」这种不准确的提醒。
+    expiring_today = [c for c in coupons if c.expires_in_days == 0]
+    expiring_soon = [c for c in coupons
+                     if c.expires_in_days is not None and 0 < c.expires_in_days <= 3]
 
     # 漏餐判定：仅当有历史订单时才算，否则视为「未知」而非「漏了」
     skipped = 0
@@ -142,7 +146,8 @@ def build_care_context(snapshot, slot, now=None) -> CareContext:
     return CareContext(
         meal=meal,
         hour=now.hour,
-        expiring_coupon_count=len(expiring),
+        expiring_coupon_count=len(expiring_today) + len(expiring_soon),
+        expiring_today=len(expiring_today),
         campaign_count=len(snapshot.campaign_names),
         skipped_meals=skipped,
         is_weekend=now.weekday() >= 5,

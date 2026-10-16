@@ -348,98 +348,158 @@ class CareContext:
 
     meal: str                      # breakfast / lunch / tea / dinner
     hour: int
-    expiring_coupon_count: int = 0
+    expiring_coupon_count: int = 0   # 3 天内到期（含今天）
+    expiring_today: int = 0          # 今天就到期（来自 expiresInDays == 0）
     campaign_count: int = 0
     minutes_since_last_order: int | None = None   # None = 无历史订单，不提
     is_weekend: bool = False
     skipped_meals: int = 0        # 依据：历史订单里当天缺失的餐次
 
 
-def _care_line(ctx: CareContext) -> tuple[str, str]:
-    """返回 (标题, 正文)。标题短、正文一句话。
+def _care_core(ctx: CareContext) -> tuple[str, str]:
+    """返回 (标题, 正文)。标题短、正文一到两句。
 
-    设计原则：
-      · 有真实依据才说 —— 不做无依据的「祝你健康」式空话
-      · 不油腻、不说教、不催促
+    设计原则（在「温暖」与「可信」之间取平衡）：
+      · 有真实依据才说 —— 没有数据支撑的「祝你健康」是空话，读者能感觉到
+      · 温暖但不说教 —— 像朋友提醒，不是长辈式的「必须」「赶紧」
+      · 不催促、不制造焦虑 —— 漏餐只说「提一句」，不吓唬
       · 不与其他品牌比较（赛事合规红线）
-      · 提到「忘记吃饭」必须有数据支撑（当天确实没下单）
+      · 提到「今天没吃」必须有数据支撑（当天确实没下单）
+
+    温暖不等于堆砌形容词。所以每句话都尽量**具体**：
+    说「先把自己喂饱」比说「要注意身体」更让人感觉到被在意。
     """
     hour = ctx.hour
+    weekend = ctx.is_weekend
 
-    # 有真实依据：券要过期
+    # ── 有真实依据：券今天就过期（最紧迫，先说） ─────────────────
+    if ctx.expiring_today > 0:
+        n = ctx.expiring_today
+        return (
+            f"有 {n} 张券今天就过期",
+            "别让它悄悄溜走 —— 顺手用上，明天的你会感谢今天。",
+        )
+
+    # ── 有真实依据：这几天要过期的券 ────────────────────────────
     if ctx.expiring_coupon_count > 0:
         n = ctx.expiring_coupon_count
         return (
-            f"有 {n} 张券快过期了",
-            f"今天不用，明天就浪费了 —— 挑餐的时候顺手用上就好。",
+            f"有 {n} 张券这几天要用掉",
+            "不着急，但别放到忘了 —— 挑餐的时候顺手用上就好。",
         )
 
-    # 有真实依据：漏餐（当天历史订单里缺这一餐）
+    # ── 有真实依据：当天确实没下单 ──────────────────────────────
     if ctx.skipped_meals >= 2:
         return (
-            "今天好像还没顾上吃饭",
-            "不催你，就是提一句 —— 现在补充一顿，比撑到明天舒服。",
+            "今天还没顾上吃饭",
+            "不催你，就是想让你知道 —— 现在补一顿，比空着撑到明天温柔得多。",
         )
 
-    # 按时段
+    # ── 深夜优先（0:00~5:29）────────────────────────────────────
+    # ⚠️ current_meal_window 把凌晨归到 dinner（分类兜底），
+    # 但语气必须按真实时间给 —— 凌晨说「今天辛苦了」是错的，
+    # 那时候人还没结束这一天。所以这一段必须在时段分支之前。
+    if hour <= 5:
+        return (
+            "还没睡呀",
+            "夜里的选择不多，但热乎的还是有的 —— 吃完早点休息。",
+        )
+
+    # ── 按时段 ─────────────────────────────────────────────────
     if ctx.meal == "breakfast":
         if hour <= 7:
             return (
-                "早上好",
-                "出门前给自己十分钟，配一份热乎的 —— 一天有个好开头。",
+                "早安",
+                "天刚亮，先给自己一份热的 —— 今天的第一顿，值得好好吃。",
             )
         return (
-            "早餐时间还剩一点",
-            "如果来得及，今天的第一顿就别省了。",
+            "早餐还来得及",
+            "别空着肚子出门。哪怕简单一份，也比饿到中午舒服。",
         )
 
     if ctx.meal == "lunch":
         if 11 <= hour <= 13:
+            if weekend:
+                return (
+                    "周末的中午",
+                    "不用赶时间，慢慢挑 —— 下面这份扛饿又实在。",
+                )
             return (
-                "到饭点了",
-                "挑一份能扛住下午的，别对付。",
+                "到饭点啦",
+                "忙了一上午，先把自己喂饱 —— 这是今天最实在的一件事。",
             )
         return (
-            "快到下午了",
-            "提前想好中午吃什么，比饿到一半再选省事。",
+            "快到饭点了",
+            "不用纠结太久，下面这份已经替你挑好了。",
         )
 
     if ctx.meal == "tea":
         return (
-            "下午容易犯困",
-            "来点能续上的，比硬扛效率高。",
+            "下午三点",
+            "有点困是正常的。来点能续上的，缓一缓再往前走。",
         )
 
     if ctx.meal == "dinner":
         if hour >= 21:
             return (
-                "今天快收尾了",
-                "晚上最后一顿，挑清爽点的东西，明天会舒服些。",
+                "今天辛苦了",
+                "一天快收尾了，最后一顿挑清爽点 —— 明天会舒服些。",
+            )
+        if weekend:
+            return (
+                "周末的晚上",
+                "今天过得慢一点吧。吃顿想吃的，剩下的明天再说。",
             )
         return (
             "到晚饭时间了",
-            "今天辛苦了，吃点想吃的。",
+            "今天不容易吧。吃顿想热的，剩下的事明天再处理。",
         )
 
-    return (
-        "到点提醒",
-        "如果你正好需要，可以看看下面这份。",
-    )
+    # 兜底（其他非餐点时段）
+    return "给你留了个位置", "不打扰，只是刚好到点。想吃就看看下面这份。"
+
+
+def _care_line(ctx: CareContext) -> tuple[str, str]:
+    """在时段文案之后**统一**追加活动提示。
+
+    为什么放在外层而不是各分支里：早期版本只在兜底分支追加，
+    结果午餐/晚餐说不到 —— 活动永远在最不容易触发的时段才出现。
+    统一到出口才能保证「有时段就提，有活动就补一句」的一致性。
+
+    活动**不抢占标题**：它在邮件下方已有独立区块，
+    关怀是入口，不该被信息类内容挤掉。
+    """
+    title, body = _care_core(ctx)
+    if ctx.campaign_count > 0:
+        body += " 顺手也把门店这边的好消息给你标出来了。"
+    return title, body
 
 
 def render_care(ctx: CareContext) -> str:
     """渲染关怀区块（HTML）。
 
-    刻意做成**克制的两行** —— 关怀是入口，不是主体。
-    邮件的主角仍然是有用的建议，不是煽情的文案。
+    视觉上刻意做得**柔一点**：暖白底、圆角、无硬边框，
+    字号比正文略大。关怀是邮件里唯一「软」的部分，
+    与下方信息密度高的建议区形成呼吸感。
+
+    但仍保持两行 —— 关怀是入口，不是主体。
+    邮件的主角始终是有用的建议，不是煽情的文案。
     """
     title, body = _care_line(ctx)
     return f"""
-        <tr><td style="padding:16px 20px;background:#fff9f0;border-left:3px solid #BA7517">
-          <div style="font-size:14px;font-weight:500;color:#412402;margin-bottom:4px">
-            {_e(title)}
-          </div>
-          <div style="font-size:13px;color:#5F5E5A;line-height:1.7">{_e(body)}</div>
+        <tr><td style="padding:0 16px 4px">
+          <table width="100%" cellspacing="0" cellpadding="0"
+                 style="background:#FFF8EE;border-radius:12px">
+            <tr><td style="padding:20px 18px 18px">
+              <div style="font-size:15px;font-weight:600;color:#8A4B0F;margin-bottom:6px;
+                          line-height:1.5">
+                <span style="font-size:14px;margin-right:6px">&#9788;</span>{_e(title)}
+              </div>
+              <div style="font-size:13px;color:#6B5A48;line-height:1.85">
+                {_e(body)}
+              </div>
+            </td></tr>
+          </table>
         </td></tr>"""
 
 
