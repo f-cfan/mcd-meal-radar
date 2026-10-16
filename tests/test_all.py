@@ -931,5 +931,137 @@ class TestDocConsistency(unittest.TestCase):
         self.assertEqual(offenders, [], f"公开文档含真实邮箱：{offenders}")
 
 
+class TestCareCopy(unittest.TestCase):
+    """时段关怀文案 —— 必须基于真实依据，且守住赛事合规红线。"""
+
+    def test_meal_windows_follow_official_hours(self):
+        """时间窗取自官方门店营业时段实测值，不是拍脑袋定的。"""
+        from mailer import current_meal_window
+        cases = {7: "breakfast", 10: "breakfast", 12: "lunch",
+                 16: "tea", 19: "dinner", 22: "dinner"}
+        for hour, expected in cases.items():
+            self.assertEqual(current_meal_window(hour), expected,
+                             f"{hour} 时应属于 {expected}")
+
+    def test_late_night_maps_to_dinner(self):
+        """凌晨 0-5 点不属于任何窗口，归到夜市场景。"""
+        from mailer import current_meal_window
+        self.assertEqual(current_meal_window(2), "dinner")
+
+    def test_expiring_coupon_drives_copy(self):
+        """有券到期时，关怀应基于这个真实依据。"""
+        from mailer import CareContext, _care_line
+        title, _ = _care_line(CareContext(meal="lunch", hour=12,
+                                          expiring_coupon_count=2))
+        self.assertIn("2 张券", title)
+        self.assertIn("过期", title)
+
+    def test_skipped_meals_needs_evidence(self):
+        """漏餐提示需要 skipped_meals 支撑 —— 无依据就不该说。"""
+        from mailer import CareContext, _care_line
+        t1, _ = _care_line(CareContext(meal="lunch", hour=12, skipped_meals=0))
+        t2, _ = _care_line(CareContext(meal="dinner", hour=19, skipped_meals=3))
+        self.assertNotIn("没顾上", t1)
+        self.assertIn("没顾上", t2)
+
+    def test_never_compares_brands(self):
+        """赛事红线：关怀文案不得出现品牌对比。"""
+        from mailer import CareContext, _care_line
+        banned = ["肯德基", "KFC", "汉堡王", "星巴克", "更便宜", "比别家"]
+        for h in range(5, 24):
+            for kwargs in ({}, {"expiring_coupon_count": 2}, {"skipped_meals": 3}):
+                title, body = _care_line(CareContext(meal="lunch", hour=h, **kwargs))
+                for word in banned:
+                    self.assertNotIn(word, title + body,
+                                     f"{h} 时的文案出现了「{word}」")
+
+    def test_copy_is_not_preachy(self):
+        """不催促、不说教 —— 用词要有节制。"""
+        from mailer import CareContext, _care_line
+        harsh = ["必须", "一定要", "赶紧", "马上", "别再", "你的身体垮", "危害健康"]
+        for h in range(5, 24):
+            title, body = _care_line(CareContext(meal="lunch", hour=h))
+            for word in harsh:
+                self.assertNotIn(word, title + body,
+                                 f"{h} 时的文案过于说教：{word}")
+
+    def test_care_renders_into_digest(self):
+        """关怀区块应出现在邮件 HTML 里。"""
+        from mailer import CareContext, render_digest
+        from solver import Decision
+        from mcd_adapter import Snapshot
+        snap = Snapshot(fetched_at="2026-10-16 12:00:00", scene="delivery",
+                        store=None, menu=[])
+        html = render_digest(Decision(None, [], [], []), snap, "", "午间",
+                             care=CareContext(meal="lunch", hour=12))
+        # 关怀正文含中文标点，直接子串匹配即可
+        self.assertIn("能扛住下午的", html)
+        self.assertIn("到饭点了", html)
+
+    def test_no_care_block_when_not_provided(self):
+        """没传关怀上下文时不应硬塞一个区块。"""
+        from mailer import render_digest
+        from solver import Decision
+        from mcd_adapter import Snapshot
+        snap = Snapshot(fetched_at="2026-10-16 12:00:00", scene="delivery",
+                        store=None, menu=[])
+        html = render_digest(Decision(None, [], [], []), snap, "", "午间")
+        self.assertNotIn("能扛住下午的", html)
+
+
+class TestPrefilter(unittest.TestCase):
+    """零成本预筛 —— 「未核价占满屏」问题的根治机制。"""
+
+    def _items(self, n):
+        from mcd_adapter import MenuItem, Money
+        from decimal import Decimal
+        return [MenuItem(f"C{i}", f"套餐{i}", "套餐", ("套餐",),
+                         Money(Decimal("30")), Money(Decimal("39")))
+                for i in range(n)]
+
+    def test_prefilter_limits_to_top_k(self):
+        from solver import apply_preference, prefilter_for_pricing, TasteProfile
+        items = self._items(100)
+        cands = apply_preference(items, TasteProfile())
+        picked = prefilter_for_pricing(cands, top_k=8)
+        self.assertEqual(len(picked), 8,
+                         "预筛必须把送核价的候选压到 top_k 以内")
+
+    def test_prefilter_drops_absurdly_expensive_when_others_exist(self):
+        """有正常候选时，标价离谱的应被滤掉。"""
+        from solver import apply_preference, prefilter_for_pricing, TasteProfile
+        from mcd_adapter import MenuItem, Money
+        from decimal import Decimal
+        items = [MenuItem("OK", "普通套餐", "套餐", ("套餐",),
+                          Money(Decimal("30")), Money(Decimal("39"))),
+                 MenuItem("RICH", "豪华套餐", "套餐", (),
+                          Money(Decimal("9999")), Money(Decimal("9999")))]
+        cands = apply_preference(items, TasteProfile())
+        picked = prefilter_for_pricing(cands, top_k=8)
+        self.assertEqual(len(picked), 1, "标价离谱的应被滤掉，只留正常的")
+        self.assertEqual(picked[0].items[0].code, "OK")
+
+    def test_prefilter_returns_all_when_filtered_empty(self):
+        """粗筛把候选全滤掉时，应回落到全部候选 —— 不能返回空列表。"""
+        from solver import apply_preference, prefilter_for_pricing, TasteProfile
+        from mcd_adapter import MenuItem, Money
+        from decimal import Decimal
+        rich = [MenuItem(f"R{i}", "豪华", "套餐", (),
+                         Money(Decimal("9999")), Money(Decimal("9999")))
+                for i in range(3)]
+        cands = apply_preference(rich, TasteProfile())
+        picked = prefilter_for_pricing(cands, top_k=8)
+        # 兜底是有意设计：粗筛全滤掉时回落全部候选，宁可多核几个价，
+        # 也不要因为粗筛过严导致无解
+        self.assertEqual(len(picked), 3, "粗筛清空时应回落到全部候选")
+
+    def test_prefilter_ignores_already_rejected(self):
+        from solver import apply_preference, prefilter_for_pricing, TasteProfile
+        items = self._items(20)
+        cands = apply_preference(items, TasteProfile(disliked_keywords=("套餐",)))
+        picked = prefilter_for_pricing(cands, top_k=8)
+        self.assertEqual(len(picked), 0, "已被忌口过滤的不该进入核价名单")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

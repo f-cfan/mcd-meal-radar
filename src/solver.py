@@ -371,10 +371,6 @@ def apply_campaign(candidates: list[Candidate], snapshot: Snapshot) -> list[Cand
     return candidates
 
 
-# --------------------------------------------------------------------------
-# 预算过滤 + 排序 + 输出
-# --------------------------------------------------------------------------
-
 def apply_budget(candidates: list[Candidate], policy: DietaryPolicy) -> list[Candidate]:
     """预算过滤。**只对已核价的候选生效** —— 未核价不得因预算被淘汰，
     否则会把「其实买得起」的方案误杀。"""
@@ -384,6 +380,51 @@ def apply_budget(candidates: list[Candidate], policy: DietaryPolicy) -> list[Can
         if cand.quoted_price is not None and cand.quoted_price.yuan > policy.budget_yuan:
             cand.rejected_by = f"预算：实付 {cand.quoted_price} 超过 {policy.budget_yuan}"
     return candidates
+
+# --------------------------------------------------------------------------
+# 零成本预筛（决定「值得花钱核价的是哪几个」）
+# --------------------------------------------------------------------------
+
+def prefilter_for_pricing(
+    candidates: list[Candidate],
+    top_k: int = 8,
+) -> list[Candidate]:
+    """在调 calculate-price 之前，先用**零成本**的约束筛出值得核价的候选。
+
+    ⚠️ 为什么必须先筛再核价
+    `calculate-price` 是逐次调用的。菜单动辄上百项，若对每个候选都核价：
+      · API 调用量爆炸（限流 600 次/分，且完全没必要）
+      · 绝大多数候选会被后续的预算/营养约束杀掉，核了也白核
+      · 邮件里出现大量「未核价」占位 —— 那不是诚实，是没做完
+
+    早期版本就是「先核价再筛选」，实测 77 个候选里 59 个显示未核价。
+    现在改为：
+      偏好层（本地打分）→ 预算预判（用菜单标价，只作**筛除**不作展示）
+      → 取前 K 个 → 只对这 K 个调 calculate-price
+
+    关键区别：菜单标价在这里只用于**淘汰明显超预算的**，
+    绝不用于展示给用户 —— 展示的金额仍然只来自 calculate-price 真实返回。
+    这条界线不能模糊：一旦用标价报价，就回到了「估算」的老路。
+    """
+    alive = [c for c in candidates if c.rejected_by is None]
+    if not alive:
+        return []
+
+    # 预算预筛：用菜单标价做**粗筛**。单商品标价 > 预算上限的必不可能入选。
+    # 注意：组合的总价在核价前算不准（套餐组合、配送打包费未知），
+    # 因此这里只做单品级的粗筛，宁可放过也不误杀。
+    rough = []
+    for c in alive:
+        single_sum = sum(i.price.yuan for i in c.items)
+        if single_sum > Decimal("200"):   # 宽松阈值，只滤明显离谱的
+            continue
+        rough.append(c)
+
+    if not rough:
+        rough = alive
+
+    rough.sort(key=lambda c: c.score, reverse=True)
+    return rough[:top_k]
 
 
 def solve(snapshot: Snapshot, profile: TasteProfile, policy: DietaryPolicy,

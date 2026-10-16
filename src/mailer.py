@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import html
 from datetime import datetime, timezone, timedelta
 
@@ -63,6 +65,7 @@ def render_digest(
     snapshot: Snapshot,
     profile_summary: str = "",
     slot: str = "午间",
+    care: CareContext | None = None,
 ) -> str:
     """渲染主推送邮件。"""
     now = datetime.now(CST)
@@ -201,6 +204,7 @@ def render_digest(
             </div>
           </td></tr>
 
+          {render_care(care) if care else ""}
           {"".join(rows)}
 
           <tr><td style="padding:14px 20px;border-top:1px solid {CLR['line']};font-size:12px;color:{CLR['muted']}">
@@ -265,9 +269,13 @@ def render_token_expired(email: str, error_detail: str, cached_summary: str = ""
     </table>""")
 
 
-def render_plain(decision: Decision, snapshot: Snapshot, slot: str = "午间") -> str:
+def render_plain(decision: Decision, snapshot: Snapshot, slot: str = "午间",
+                 care: CareContext | None = None) -> str:
     """纯文本版。用于终端演示与不支持 HTML 的客户端。"""
     lines: list[str] = []
+    if care:
+        title, body = _care_line(care)
+        lines.extend([title, body, ""])
     expiring = _expiring_coupons_safe(snapshot)
     if expiring:
         lines.append(f"[!] {len(expiring)} 张券即将过期")
@@ -314,3 +322,136 @@ def _wrap(inner: str) -> str:
 <body style="margin:0;padding:0;background:{CLR['bg']}">
 {inner}
 </body></html>"""
+
+
+# --------------------------------------------------------------------------
+# 时段关怀文案
+# --------------------------------------------------------------------------
+
+# 官方活动日历里有「早餐(05:30~10:59)/午餐(11:00~14:59)/下午茶(15:00~17:29)/夜市(17:30~23:59)」
+# 这四个时段划分来自实测的门店营业时段返回，用它而不是拍脑袋定时间。
+MEAL_WINDOWS = {
+    "breakfast": (5 * 60 + 30, 10 * 60 + 59),
+    "lunch":     (11 * 60, 14 * 60 + 59),
+    "tea":       (15 * 60, 17 * 60 + 29),
+    "dinner":    (17 * 60 + 30, 23 * 60 + 59),
+}
+
+
+@dataclass(frozen=True)
+class CareContext:
+    """关怀所需的真实上下文。
+
+    **只接受真实数据** —— 没有依据就不生成关怀句，
+    这是「不编造」纪律在文案层的延伸。
+    """
+
+    meal: str                      # breakfast / lunch / tea / dinner
+    hour: int
+    expiring_coupon_count: int = 0
+    campaign_count: int = 0
+    minutes_since_last_order: int | None = None   # None = 无历史订单，不提
+    is_weekend: bool = False
+    skipped_meals: int = 0        # 依据：历史订单里当天缺失的餐次
+
+
+def _care_line(ctx: CareContext) -> tuple[str, str]:
+    """返回 (标题, 正文)。标题短、正文一句话。
+
+    设计原则：
+      · 有真实依据才说 —— 不做无依据的「祝你健康」式空话
+      · 不油腻、不说教、不催促
+      · 不与其他品牌比较（赛事合规红线）
+      · 提到「忘记吃饭」必须有数据支撑（当天确实没下单）
+    """
+    hour = ctx.hour
+
+    # 有真实依据：券要过期
+    if ctx.expiring_coupon_count > 0:
+        n = ctx.expiring_coupon_count
+        return (
+            f"有 {n} 张券快过期了",
+            f"今天不用，明天就浪费了 —— 挑餐的时候顺手用上就好。",
+        )
+
+    # 有真实依据：漏餐（当天历史订单里缺这一餐）
+    if ctx.skipped_meals >= 2:
+        return (
+            "今天好像还没顾上吃饭",
+            "不催你，就是提一句 —— 现在补充一顿，比撑到明天舒服。",
+        )
+
+    # 按时段
+    if ctx.meal == "breakfast":
+        if hour <= 7:
+            return (
+                "早上好",
+                "出门前给自己十分钟，配一份热乎的 —— 一天有个好开头。",
+            )
+        return (
+            "早餐时间还剩一点",
+            "如果来得及，今天的第一顿就别省了。",
+        )
+
+    if ctx.meal == "lunch":
+        if 11 <= hour <= 13:
+            return (
+                "到饭点了",
+                "挑一份能扛住下午的，别对付。",
+            )
+        return (
+            "快到下午了",
+            "提前想好中午吃什么，比饿到一半再选省事。",
+        )
+
+    if ctx.meal == "tea":
+        return (
+            "下午容易犯困",
+            "来点能续上的，比硬扛效率高。",
+        )
+
+    if ctx.meal == "dinner":
+        if hour >= 21:
+            return (
+                "今天快收尾了",
+                "晚上最后一顿，挑清爽点的东西，明天会舒服些。",
+            )
+        return (
+            "到晚饭时间了",
+            "今天辛苦了，吃点想吃的。",
+        )
+
+    return (
+        "到点提醒",
+        "如果你正好需要，可以看看下面这份。",
+    )
+
+
+def render_care(ctx: CareContext) -> str:
+    """渲染关怀区块（HTML）。
+
+    刻意做成**克制的两行** —— 关怀是入口，不是主体。
+    邮件的主角仍然是有用的建议，不是煽情的文案。
+    """
+    title, body = _care_line(ctx)
+    return f"""
+        <tr><td style="padding:16px 20px;background:#fff9f0;border-left:3px solid #BA7517">
+          <div style="font-size:14px;font-weight:500;color:#412402;margin-bottom:4px">
+            {_e(title)}
+          </div>
+          <div style="font-size:13px;color:#5F5E5A;line-height:1.7">{_e(body)}</div>
+        </td></tr>"""
+
+
+def current_meal_window(hour: int) -> str:
+    """按小时判断当前处于哪个餐次。落在窗口外返回最近的窗口。
+
+    时间窗取自官方门店营业时段（实测 reservationOptionText）：
+    早餐 05:30-10:59 / 午餐 11:00-14:59 / 下午茶 15:00-17:29 / 夜市 17:30-23:59
+    """
+    minutes = hour * 60
+    for name, (start, end) in MEAL_WINDOWS.items():
+        if start <= minutes <= end:
+            return name
+    # 凌晨 0:00-5:29 不在任何窗口，归到夜市（熬夜场景）
+    return "dinner"

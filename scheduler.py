@@ -29,20 +29,26 @@ from decimal import Decimal
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
 
-from collector import get_snapshot  # noqa: E402
+from collector import get_snapshot, plan_quotes, quote_candidates  # noqa: E402
 from mcd_adapter import (  # noqa: E402
+    McdMcpClient,
     build_taste_profile_from_orders,
     profile_summary as build_profile_summary,
-    parse_order_list,
 )
 from mail import describe_channels, push  # noqa: E402
-from mailer import render_digest, render_plain, render_token_expired  # noqa: E402
+from mailer import (  # noqa: E402
+    CareContext, current_meal_window, render_digest, render_plain, render_token_expired,
+)
 from mcd_adapter import MCPError  # noqa: E402
 from solver import DietaryPolicy, Decision, TasteProfile, load_profile, solve  # noqa: E402
 
 CST = timezone(timedelta(hours=8))
 
 PROFILE_PATH = "data/profile.json"
+
+# 送核价的候选数量上限。
+# 8 个足够填满「主推 1 + 备选 3」，且把 API 调用控制在个位数。
+QUOTE_TOP_K = 8
 
 
 @dataclass
@@ -109,6 +115,40 @@ def resolve_profile(snapshot, manual: TasteProfile | None = None) -> TasteProfil
     return cached if cached.order_count or cached.top_codes else (manual or TasteProfile())
 
 
+def build_care_context(snapshot, slot, now=None) -> CareContext:
+    """从真实数据构造关怀上下文。
+
+    **只传有依据的信号** —— 例如「漏餐」必须在历史订单里真的缺失该餐次，
+    不能凭空说「你该吃饭了」。这是「不编造」纪律在文案层的延伸：
+    没有数据支撑的关怀就是空话，读者能感觉到。
+    """
+    now = now or datetime.now(CST)
+    meal = current_meal_window(now.hour)
+
+    coupons = snapshot.store_coupons or snapshot.my_coupons
+    expiring = [c for c in coupons
+                if c.expires_in_days is not None and c.expires_in_days <= 1]
+
+    # 漏餐判定：仅当有历史订单时才算，否则视为「未知」而非「漏了」
+    skipped = 0
+    if snapshot.orders:
+        today = now.strftime("%Y%m%d")
+        ordered_today = [o for o in snapshot.orders
+                         if str(o.get("orderId", "")).endswith(today)
+                         or str(o.get("createdAt", "")).startswith(now.strftime("%Y-%m-%d"))]
+        # 今天已下单过 → 没漏；没下单且有历史 → 按「可能漏餐」处理（保守）
+        skipped = 0 if ordered_today else 1
+
+    return CareContext(
+        meal=meal,
+        hour=now.hour,
+        expiring_coupon_count=len(expiring),
+        campaign_count=len(snapshot.campaign_names),
+        skipped_meals=skipped,
+        is_weekend=now.weekday() >= 5,
+    )
+
+
 def profile_summary(profile: TasteProfile, menu=None) -> str:
     """画像摘要。显示在邮件底部 —— 让用户知道建议基于什么。
 
@@ -143,7 +183,23 @@ def run_slot(
     else:
         # 画像只解析一次，既用于求解也用于渲染摘要（早期版本重复调用两次）
         profile = resolve_profile(snap)
-        decision = solve(snap, profile, load_policy())
+        policy = load_policy()
+
+        # ① 零成本预筛：先决定「问哪些组合的价」，不发请求。
+        #    早期版本是「先核价再筛选」，导致邮件里 59/77 显示未核价 ——
+        #    那是没做完，不是诚实。
+        price_table, breakdowns = {}, {}
+        if mode == "live" and snap.menu and not snap.degraded:
+            combos, _picked = plan_quotes(snap, profile, policy, top_k=QUOTE_TOP_K)
+            if combos and snap.store:
+                price_table, breakdowns = quote_candidates(
+                    McdMcpClient(), snap.store.store_code, "delivery", combos,
+                    address_id=os.environ.get("MCD_ADDRESS_ID") or None,
+                    be_code=snap.store.be_code,
+                )
+
+        # ② 求解（纯本地计算，不发请求）
+        decision = solve(snap, profile, policy, price_table, breakdowns)
         profile_text = profile_summary(profile, snap.menu)
 
     # 3) 渲染
@@ -153,8 +209,9 @@ def run_slot(
         text = "MCP Token 已失效，请到 open.mcd.cn/mcp 重新获取并更新 MCD_MCP_TOKEN。"
     else:
         subject = f"【麦麦饭点雷达】{slot.label}建议 · {datetime.now(CST):%m-%d}"
-        html = render_digest(decision, snap, profile_text, slot.label)
-        text = render_plain(decision, snap, slot.label)
+        care = build_care_context(snap, slot)
+        html = render_digest(decision, snap, profile_text, slot.label, care=care)
+        text = render_plain(decision, snap, slot.label, care=care)
 
     # 4) 落盘（便于离线预览与调试）
     safe = slot.key

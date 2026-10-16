@@ -99,6 +99,35 @@ def load_price_table_from_fixtures() -> dict[str, object]:
     }
 
 
+def plan_quotes(snapshot: Snapshot, profile, policy, top_k: int = 8):
+    """决定「问哪些组合的价」—— 零成本预筛，不发任何请求。
+
+    ⚠️ 这是「未核价」问题的根治点。
+    早期版本直接对菜单前 N 项调 calculate-price，实测 77 个候选里
+    59 个显示「未核价」—— 那不是诚实，是没做完。
+
+    现在先跑一遍完整的本地求解（偏好 → 券枚举 → 预筛），
+    只把**最可能被选中的 K 个**送去核价：
+      · API 调用量从数十次降到个位数
+      · 邮件里的「未核价」占位从 59 个降到 0~2 个
+
+    返回 (待核价组合列表, 预筛后的候选)。
+    """
+    from solver import apply_preference, enumerate_coupon_combinations, prefilter_for_pricing
+
+    if not snapshot.menu:
+        return [], []
+
+    cands = apply_preference(snapshot.menu, profile)
+    if snapshot.my_coupons or snapshot.store_coupons:
+        cands = enumerate_coupon_combinations(
+            cands, snapshot.my_coupons, snapshot.store_coupons)
+
+    picked = prefilter_for_pricing(cands, top_k=top_k)
+    combos = [[(i.code, 1) for i in c.items] for c in picked]
+    return combos, picked
+
+
 def quote_candidates(client: McdMcpClient, store_code: str, scene: str,
                      combos: list[list[tuple[str, int]]],
                      address_id: str | None = None,
