@@ -371,10 +371,14 @@ class TestPushChannels(unittest.TestCase):
         """Agent 通道应能自动解析收件地址 —— 用户装了 CLI 登录过就能零配置发送。
 
         这是实测踩过的坑：最初要求用户手填 RADAR_TO，导致无人值守任务跑不通。
+
+        注意必须 mock 掉 load_env：本机 .env 里配了 RADAR_TO，
+        而 _get 会回落到读文件，仅清环境变量不足以让「自动解析」成为唯一来源。
         """
         import mail as mail_mod
         from unittest import mock
-        with mock.patch.object(mail_mod, "agent_mail_address",
+        with mock.patch.object(mail_mod, "load_env", lambda *a, **k: {}), \
+             mock.patch.object(mail_mod, "agent_mail_address",
                                lambda: "auto@agent.qq.com"), \
              mock.patch.object(mail_mod, "push_via_agent",
                                lambda to, *a, **k: mail_mod.PushResult(True, "ok", "agent-mail", to)):
@@ -383,7 +387,23 @@ class TestPushChannels(unittest.TestCase):
             res = mail_mod.push("", "主题", "<p>正文</p>")
         self.assertTrue(res.ok)
         self.assertEqual(res.address, "auto@agent.qq.com",
-                         "应使用自动解析出的 Agent Mail 地址")
+                         "未配置 RADAR_TO 时应回落到自动解析的 Agent Mail 地址")
+
+    def test_explicit_recipient_overrides_auto_resolve(self):
+        """显式配置的收件人优先于自动解析 —— 这样才能发到任意邮箱。"""
+        import mail as mail_mod
+        from unittest import mock
+        with mock.patch.object(mail_mod, "load_env", lambda *a, **k: {}), \
+             mock.patch.object(mail_mod, "agent_mail_address",
+                               lambda: "should-not-be-used@agent.qq.com"), \
+             mock.patch.object(mail_mod, "push_via_agent",
+                               lambda to, *a, **k: mail_mod.PushResult(True, "ok", "agent-mail", to)):
+            os.environ["MAIL_CHANNEL"] = "agent"
+            os.environ["RADAR_TO"] = "my-private@example.com"
+            res = mail_mod.push("", "主题", "<p>正文</p>")
+        self.assertTrue(res.ok)
+        self.assertEqual(res.address, "my-private@example.com",
+                         "RADAR_TO 应优先于自动解析值")
 
     def test_all_channels_fail_gives_diagnostics(self):
         """所有通道都失败时，note 要含每条通道的失败原因，便于排障。"""
