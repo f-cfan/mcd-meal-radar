@@ -18,7 +18,9 @@ import unittest
 from decimal import Decimal
 from unittest import mock
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(_ROOT, "src"))
+sys.path.insert(0, _ROOT)   # scheduler.py 在项目根
 
 from mcd_adapter import (  # noqa: E402
     SCENES, Money, build_create_order_params, cents_to_yuan,
@@ -556,6 +558,123 @@ class TestCliDiscovery(unittest.TestCase):
             self.skipTest("本机无 managed runtime 安装，跳过")
         # 即使 PATH 里没有，_find_agent_cli 也应能通过 glob 找到
         self.assertTrue(mail_mod._find_agent_cli() is not None)
+
+
+class TestProfileDerivation(unittest.TestCase):
+    """偏好画像自动推导 —— 个性化功能的真正实现。
+
+    早期版本只有空画像 + 手工配置，等于个性化没实现。
+    现在从 order-list 真实响应推导，此测试锁定推导规则。
+    """
+
+    def _menu(self):
+        from mcd_adapter import MenuItem
+        from decimal import Decimal as D
+        return [
+            MenuItem("A", "巨无霸套餐", "汉堡", ("套餐", "人气"), D("39.5"), D("39.5")),
+            MenuItem("B", "麦辣鸡腿堡", "汉堡", ("单品", "人气"), D("22.5"), D("22.5")),
+            MenuItem("C", "薯条", "小食", ("小食",), D("11"), D("11")),
+            MenuItem("D", "麦乐鸡", "小食", ("小食", "炸物"), D("35"), D("35")),
+        ]
+
+    def _orders(self):
+        return [
+            {"storeCode": "1400649", "totalPrice": 3950,
+             "items": [{"productCode": "A", "quantity": 1}]},
+            {"storeCode": "1400649", "totalPrice": 2250, "discount": 100,
+             "items": [{"productCode": "B", "quantity": 1}]},
+            {"storeCode": "1400999", "totalPrice": 1100,
+             "items": [{"productCode": "C", "quantity": 1}]},
+            # 第四单含 A+C：3950+1100 = 5050 分 = ¥50.5
+            {"storeCode": "1400649", "totalPrice": 5050,
+             "items": [{"productCode": "A", "quantity": 1}, {"productCode": "C", "quantity": 1}]},
+        ]
+
+    def test_derives_frequent_items(self):
+        from mcd_adapter import build_taste_profile_from_orders
+        p = build_taste_profile_from_orders(self._orders(), self._menu())
+        # A 出现 2 次、C 出现 2 次 → 应进 top
+        self.assertEqual(p.order_count, 4)
+        self.assertIn("A", p.top_codes)
+        self.assertIn("C", p.top_codes)
+
+    def test_derives_favorite_store(self):
+        from mcd_adapter import build_taste_profile_from_orders
+        p = build_taste_profile_from_orders(self._orders(), self._menu())
+        self.assertEqual(p.favorite_store_code, "1400649")  # 3 次 vs 1 次
+
+    def test_derives_avg_price_and_discount_rate(self):
+        from mcd_adapter import build_taste_profile_from_orders
+        p = build_taste_profile_from_orders(self._orders(), self._menu())
+        # 四单实付：39.5 + 22.5 + 11 + 50.5 = 123.5，均值 30.875
+        avg = getattr(p, "avg_order_price", 0)
+        self.assertAlmostEqual(avg, (39.5 + 22.5 + 11 + 50.5) / 4, places=2)
+        hit = getattr(p, "discount_hit_rate", 0)
+        self.assertAlmostEqual(hit, 0.25, places=2)   # 4 单中 1 单有优惠
+
+    def test_empty_orders_yields_empty_profile(self):
+        """新账号无历史订单（实测 data:{}）必须优雅降级，不能抛异常。"""
+        from mcd_adapter import build_taste_profile_from_orders
+        p = build_taste_profile_from_orders([], self._menu())
+        self.assertEqual(p.order_count, 0)
+        self.assertEqual(p.top_codes, ())
+
+    def test_parse_order_list_handles_empty_object(self):
+        """实测：新账号 order-list 返回 data:{}，不能当异常。"""
+        from mcd_adapter import parse_order_list
+        self.assertEqual(parse_order_list({"data": {}}), [])
+        self.assertEqual(parse_order_list({"data": None}), [])
+        self.assertEqual(parse_order_list({}), [])
+
+    def test_parse_order_list_reads_list(self):
+        from mcd_adapter import parse_order_list
+        rows = [{"storeCode": "X", "items": []}]
+        self.assertEqual(parse_order_list({"data": {"orders": rows}}), rows)
+
+    def test_profile_summary_says_first_run(self):
+        """无画像时摘要必须明说「首次运行」，不能假装有历史。"""
+        from mcd_adapter import build_taste_profile_from_orders, profile_summary
+        p = build_taste_profile_from_orders([], self._menu())
+        self.assertIn("首次运行", profile_summary(p, self._menu()))
+
+    def test_profile_summary_shows_evidence(self):
+        """摘要要展示推导依据，让用户能发现偏差并纠正。"""
+        from mcd_adapter import build_taste_profile_from_orders, profile_summary
+        p = build_taste_profile_from_orders(self._orders(), self._menu())
+        text = profile_summary(p, self._menu())
+        self.assertIn("4 笔历史订单", text)
+        self.assertIn("常点", text)
+        self.assertIn("客单价", text)
+
+
+class TestProfileResolution(unittest.TestCase):
+    """画像来源优先级：自动推导 > 缓存 > 手工。"""
+
+    def test_derived_wins_over_cached(self):
+        import scheduler
+        from mcd_adapter import Snapshot
+
+        class FakeSnap:
+            orders = [{"storeCode": "S1", "totalPrice": 3000,
+                       "items": [{"productCode": "A", "quantity": 1}]}]
+            menu = []
+        prof = scheduler.resolve_profile(FakeSnap())
+        self.assertEqual(prof.order_count, 1)
+        self.assertEqual(prof.favorite_store_code, "S1")
+
+    def test_manual_disliked_keywords_always_kept(self):
+        """手工声明的忌口是用户主动表达，自动推导不该覆盖它。"""
+        import scheduler
+        from solver import TasteProfile
+
+        class FakeSnap:
+            orders = [{"storeCode": "S1", "totalPrice": 3000,
+                       "items": [{"productCode": "A", "quantity": 1}]}]
+            menu = []
+
+        manual = TasteProfile(disliked_keywords=("辣椒",))
+        prof = scheduler.resolve_profile(FakeSnap(), manual)
+        self.assertIn("辣椒", prof.disliked_keywords)
 
 
 if __name__ == "__main__":

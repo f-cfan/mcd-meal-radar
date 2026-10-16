@@ -31,6 +31,7 @@ from mcd_adapter import (
     parse_points,
     parse_stores,
     parse_campaign_titles,
+    parse_order_list,
 )
 
 FIXTURE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "fixtures")
@@ -253,6 +254,10 @@ def fetch_live_snapshot(client: McdMcpClient, scene: str = "delivery",
     # 积分与活动 —— 实测字段名 availablePoint；活动返回人读文本
     snap.points = parse_points(client.call_tool("query-my-account", {}))
     snap.campaign_names = parse_campaign_titles(client.call_tool("campaign-calendar", {}))
+
+    # 历史订单 —— 用于推导偏好画像。
+    # 实测：新账号返回 data:{}（空对象），parse_order_list 会优雅降级为 []
+    snap.orders = parse_order_list(client.call_tool("order-list", {}))
 
     return snap
 

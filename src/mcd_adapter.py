@@ -193,6 +193,7 @@ class Snapshot:
     store_coupons: list[Coupon] = field(default_factory=list)
     points: int | None = None
     campaign_names: list[str] = field(default_factory=list)
+    orders: list[dict] = field(default_factory=list)   # 历史订单，用于画像推导
     degraded: bool = False
     degrade_reason: str | None = None
     source: str = "live"
@@ -681,3 +682,158 @@ def load_fixture(name: str, fixture_dir: str) -> dict:
     path = os.path.join(fixture_dir, f"{name}.json")
     with open(path, encoding="utf-8") as fh:
         return json.load(fh)
+
+
+# --------------------------------------------------------------------------
+# 偏好画像推导
+# --------------------------------------------------------------------------
+
+def parse_order_list(payload: dict) -> list[dict]:
+    """order-list 响应 → 订单摘要列表。
+
+    ⚠️ 实测（2026-10-16）：data 可能返回**空对象 `{}`**，表示账号还没有历史订单
+    （新注册账号的常见状态）。这不是错误，必须优雅降级为「首次运行」。
+    """
+    data = (payload or {}).get("data")
+    if not isinstance(data, dict) or not data:
+        return []
+    for key in ("orders", "orderList", "list", "records"):
+        rows = data.get(key)
+        if isinstance(rows, list):
+            return rows
+    # 只有一个列表型字段时也接受
+    for v in data.values():
+        if isinstance(v, list) and v and isinstance(v[0], dict):
+            return v
+    return []
+
+
+def parse_nutrition_dsl_table(payload: dict) -> dict[str, Nutrition]:
+    """list-nutrition-foods → {名称: Nutrition}（parse_nutrition_list 的别名）。
+
+    语义上与 parse_nutrition_list 完全相同，单独命名是为了让调用方
+    一眼看出这是「按名称的表」，而不是「按编码的映射」——
+    因为官方营养表确实不含编码。
+    """
+    return parse_nutrition_list(payload)
+
+
+def build_taste_profile_from_orders(
+    orders: list[dict],
+    menu: list[MenuItem] | None = None,
+    top_n: int = 5,
+    discount_sensitivity: float = 1.0,
+) -> "TasteProfile":
+    """从历史订单推导偏好画像。
+
+    这是「个性化」的真正实现 —— 早期版本只有空画像 + 手动配置，
+    等于个性化功能没实现。本函数让推荐真正基于用户自己的历史。
+
+    推导逻辑（全部可解释，不用模型猜测）：
+      · 常点商品   → 按出现频次排序，取前 N
+      · 价格敏感度 → 历史订单里「有优惠标记」的占比
+      · 口味标签   → 常点商品在菜单里的 tags 聚合
+      · 常去门店   → 出现频次最高的 storeCode
+      · 忌口关键词 → 用户显式声明的排除词（不猜，猜错会误伤）
+
+    **隐私约束**：此函数只产出统计量，不保留订单原文。
+    结果仅存本地 data/profile.json（已 gitignore），不外传。
+    """
+    from solver import TasteProfile  # 延迟导入避免循环依赖
+
+    if not orders:
+        return TasteProfile()
+
+    name_by_code: dict[str, str] = {}
+    tags_by_code: dict[str, tuple[str, ...]] = {}
+    if menu:
+        for item in menu:
+            name_by_code[item.code] = item.name
+            tags_by_code[item.code] = item.tags
+
+    freq: dict[str, int] = {}
+    store_freq: dict[str, int] = {}
+    tag_freq: dict[str, int] = {}
+    discounted_orders = 0
+    total_orders = 0
+    total_spend = 0
+
+    for order in orders:
+        total_orders += 1
+        sc = order.get("storeCode")
+        if sc:
+            store_freq[sc] = store_freq.get(sc, 0) + 1
+
+        price = order.get("totalPrice") or order.get("price")
+        if price is not None:
+            try:
+                cents = Decimal(str(price))
+                total_spend += cents / Decimal(100)
+            except Exception:
+                pass
+
+        # 优惠痕迹：官方在有优惠时通常会给 discount 或优惠标记
+        disc = order.get("discount") or order.get("discountAmount")
+        if disc not in (None, 0, "0", ""):
+            discounted_orders += 1
+
+        for item in (order.get("items") or order.get("productList") or []):
+            code = str(item.get("productCode") or item.get("code") or "")
+            if not code:
+                continue
+            qty = int(item.get("quantity") or 1)
+            freq[code] = freq.get(code, 0) + qty
+            for tag in tags_by_code.get(code, ()):
+                tag_freq[tag] = tag_freq.get(tag, 0) + qty
+
+    if not freq:
+        return TasteProfile(order_count=total_orders)
+
+    top_codes = tuple(c for c, _ in sorted(freq.items(), key=lambda x: (-x[1], x[0]))[:top_n])
+
+    # 标签权重：出现越多越喜欢，但做对数压缩避免热门标签霸榜
+    liked_tags: dict[str, int] = {}
+    for tag, n in tag_freq.items():
+        import math
+        liked_tags[tag] = max(1, int(math.log1p(n) * 10))
+
+    top_store = max(store_freq.items(), key=lambda x: (x[1], x[0]))[0] if store_freq else None
+
+    avg = (total_spend / total_orders) if total_orders else 0
+    profile = TasteProfile(
+        top_codes=top_codes,
+        liked_tags=liked_tags,
+        disliked_keywords=(),
+        favorite_store_code=top_store,
+        order_count=total_orders,
+    )
+    # 附加推导指标（存在 model_extra 里，避免动 dataclass 结构）
+    profile.avg_order_price = float(avg)
+    profile.discount_hit_rate = (discounted_orders / total_orders) if total_orders else 0.0
+    return profile
+
+
+def profile_summary(profile: "TasteProfile", menu: list[MenuItem] | None = None) -> str:
+    """生成人话版画像摘要，用于邮件展示「建议基于什么」。
+
+    让用户能一眼看出推荐依据，而不是黑盒输出 —— 也便于用户发现偏差并纠正。
+    """
+    name_by_code = {m.code: m.name for m in menu} if menu else {}
+    bits: list[str] = []
+    if profile.order_count:
+        bits.append(f"基于你的 {profile.order_count} 笔历史订单")
+    else:
+        return "首次运行，尚未建立偏好画像（仅按营养与预算给出建议）"
+
+    if profile.top_codes:
+        names = [name_by_code.get(c, c) for c in profile.top_codes[:3]]
+        bits.append("常点 " + "、".join(names))
+    if profile.favorite_store_code:
+        bits.append("常去门店 " + profile.favorite_store_code)
+    avg = getattr(profile, "avg_order_price", 0)
+    if avg:
+        bits.append(f"客单价约 ¥{avg:.0f}")
+    hit = getattr(profile, "discount_hit_rate", 0)
+    if hit:
+        bits.append(f"历史用券率 {hit:.0%}")
+    return " · ".join(bits)

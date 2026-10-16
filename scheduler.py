@@ -30,6 +30,11 @@ from decimal import Decimal
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
 
 from collector import get_snapshot  # noqa: E402
+from mcd_adapter import (  # noqa: E402
+    build_taste_profile_from_orders,
+    profile_summary as build_profile_summary,
+    parse_order_list,
+)
 from mail import describe_channels, push  # noqa: E402
 from mailer import render_digest, render_plain, render_token_expired  # noqa: E402
 from mcd_adapter import MCPError  # noqa: E402
@@ -74,14 +79,42 @@ def load_policy() -> DietaryPolicy:
     )
 
 
-def profile_summary(profile: TasteProfile) -> str:
-    """画像摘要。显示在邮件底部 —— 让用户知道建议基于什么。"""
-    bits = []
-    if profile.order_count:
-        bits.append(f"基于你的 {profile.order_count} 笔历史订单")
-    if profile.top_codes:
-        bits.append(f"常点 {len(profile.top_codes)} 款")
-    return " · ".join(bits) if bits else "首次运行，尚未建立偏好画像"
+def resolve_profile(snapshot, manual: TasteProfile | None = None) -> TasteProfile:
+    """画像来源优先级：**自动推导 > 本地缓存 > 手工配置**。
+
+    为什么自动推导优先 —— 个性化的价值全在「基于你自己的历史」，
+    手工配置只是冷启动兜底。
+
+    手工配置的忌口词始终保留（它是用户主动声明的，推导不应该覆盖），
+    也不覆盖自动推导出的常点商品。
+    """
+    derived = build_taste_profile_from_orders(snapshot.orders, snapshot.menu)
+    cached = load_profile(PROFILE_PATH)
+
+    if derived.order_count:
+        # 有历史订单 → 自动推导为主，忌口词用「推导 ∪ 手工」
+        merged_kw = tuple(sorted(set(derived.disliked_keywords)
+                                 | set(cached.disliked_keywords)
+                                 | set(manual.disliked_keywords if manual else ())))
+        derived.disliked_keywords = merged_kw
+        # 手工若声明了标签权重，与推导结果合并（手工优先级更高）
+        merged_tags = dict(derived.liked_tags)
+        merged_tags.update(cached.liked_tags)
+        if manual:
+            merged_tags.update(manual.liked_tags)
+        derived.liked_tags = merged_tags
+        return derived
+
+    # 无历史订单 → 回落到缓存，再回落到手工配置
+    return cached if cached.order_count or cached.top_codes else (manual or TasteProfile())
+
+
+def profile_summary(profile: TasteProfile, menu=None) -> str:
+    """画像摘要。显示在邮件底部 —— 让用户知道建议基于什么。
+
+    用 mcd_adapter.profile_summary 以复用「人话化」逻辑。
+    """
+    return build_profile_summary(profile, menu)
 
 
 def run_slot(
@@ -108,7 +141,7 @@ def run_slot(
     if token_dead:
         decision: Decision = Decision(None, [], ["实时数据"], ["Token 失效"])
     else:
-        profile = load_profile(PROFILE_PATH)
+        profile = resolve_profile(snap)
         decision = solve(snap, profile, load_policy())
 
     # 3) 渲染
@@ -118,7 +151,10 @@ def run_slot(
         text = "MCP Token 已失效，请到 open.mcd.cn/mcp 重新获取并更新 MCD_MCP_TOKEN。"
     else:
         subject = f"【麦麦饭点雷达】{slot.label}建议 · {datetime.now(CST):%m-%d}"
-        html = render_digest(decision, snap, profile_summary(load_profile(PROFILE_PATH)), slot.label)
+        html = render_digest(
+            decision, snap,
+            profile_summary(resolve_profile(snap), snap.menu),
+            slot.label)
         text = render_plain(decision, snap, slot.label)
 
     # 4) 落盘（便于离线预览与调试）
