@@ -161,7 +161,7 @@ launchctl load ~/Library/LaunchAgents/com.mealradar.morning.plist
 python scheduler.py --live --now lunch
 
 # 看 SMTP 配置是否被识别（不打印授权码明文）
-python -c "import sys; sys.path.insert(0,'src'); from mail import MailConfig; print(MailConfig().describe())"
+python -c "import sys; sys.path.insert(0,'src'); from mail import SmtpConfig, describe_channels; print(describe_channels())"
 
 # 验证 MCP Token 是否有效
 python -c "
@@ -169,7 +169,7 @@ import sys; sys.path.insert(0,'src')
 from mcd_adapter import McdMcpClient, MCPError
 c = McdMcpClient()
 try:
-    print('Token 有效，账户积分：', c.call_tool('query-my-account', {}).get('data', {}).get('available'))
+    print('Token 有效，账户积分：', c.call_tool('query-my-account', {}).get('data', {}).get('availablePoint'))
 except MCPError as e:
     print('Token 不可用：', e, '(code=%s)' % e.code)
 "

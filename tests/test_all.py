@@ -901,6 +901,10 @@ class TestDocConsistency(unittest.TestCase):
         r"(\d+) 单测",
         r"(\d+) passed",
         r"(\d+) 个测试",
+        # ⚠️ 必须允许数字后跟标点 —— 早期版本漏了「76 个，」这种写法，
+        # 导致 README:100 的过期数字躲过了校验。
+        r"跑单测（(\d+) 个",
+        r"跑单测\((\d+) 个",
     )
 
     def test_test_count_matches_everywhere(self):
@@ -922,12 +926,78 @@ class TestDocConsistency(unittest.TestCase):
         offenders = []
         for rel in self._docs_present():
             text = self._read(rel)
-            # 只匹配明确指代 fixtures 的表述，避免误伤「12 点」「5 个券」
-            for m in re.finditer(r"(\d+) 份(?![钟])", text):
-                if int(m.group(1)) != real:
-                    offenders.append(f"{rel}: {m.group(0)}（实际 {real}）")
+            # ⚠️ 只校验「总份数」表述，**不能**把所有「N 份」都算进去 ——
+            # 文档里「其中 6 份是真实录制」说的是子集，不是总数。
+            # 这里匹配「存放/包含/共 N 份」这类总数字段。
+            for pat in (r"存放\s*(\d+)\s*份", r"包含\s*(\d+)\s*份",
+                        r"共\s*(\d+)\s*份", r"(\d+)\s*份响应样本"):
+                for m in re.finditer(pat, text):
+                    if int(m.group(1)) != real:
+                        offenders.append(f"{rel}: {m.group(0)}（实际 {real}）")
         self.assertEqual(offenders, [],
                          "fixtures 份数不符：\n  " + "\n  ".join(offenders))
+
+    def test_fixtures_real_vs_derived_breakdown(self):
+        """fixtures 的「真实录制 / 文档推导」占比必须与实际一致。
+
+        真实教训：批量替换数字时把「其中 5 份是真实录制」误改成了
+        「18 份是真实录制」，与 MCP_INTEGRATION.md 的两类说明矛盾。
+        """
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        d = os.path.join(root, "fixtures")
+        files = [f for f in os.listdir(d) if f.endswith((".json", ".txt"))]
+        real = [f for f in files if f.startswith("real_")]
+        derived = [f for f in files if not f.startswith("real_")]
+
+        for rel in self._docs_present():
+            text = self._read(rel)
+            # 形如「其中 6 份是 ... 真实调用录制」
+            m = re.search(r"其中\s*(\d+)\s*份是[^。]{0,20}真实", text)
+            if m:
+                self.assertEqual(int(m.group(1)), len(real),
+                                 f"{rel} 称 {m.group(1)} 份真实录制，"
+                                 f"实际 {len(real)} 份")
+            # 形如「12 份是按官方文档结构整理」
+            m2 = re.search(r"(\d+)\s*份是(?:按)?官方", text)
+            if m2:
+                self.assertEqual(int(m2.group(1)), len(derived),
+                                 f"{rel} 称 {m2.group(1)} 份推导样本，"
+                                 f"实际 {len(derived)} 份")
+
+    def test_docs_reference_real_code_symbols(self):
+        """文档里给的排错命令引用的符号必须真实存在。
+
+        真实教训：SCHEDULE.md 写 `from mail import MailConfig`，
+        但实际类名是 `SmtpConfig` —— 照着文档敲会直接 ImportError。
+        """
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        mail_src = open(os.path.join(root, "src", "mail.py"),
+                        encoding="utf-8").read()
+        mcd_src = open(os.path.join(root, "src", "mcd_adapter.py"),
+                       encoding="utf-8").read()
+
+        sched = self._read("docs/SCHEDULE.md")
+        # from mail import X → X 必须在 mail.py
+        # ⚠️ 只取 import 列表里**逗号分隔的标识符**，
+        # 遇到分号/括号就截断 —— 否则 `from mail import X; print(X)`
+        # 里的 `X; print(X)` 会被当成一个符号。
+        for mod, names in re.findall(r"from (mail|mcd_adapter) import ([^\n]+)",
+                                     sched):
+            names = re.split(r"[;)]", names)[0]
+            for sym in names.split(","):
+                sym = sym.strip()
+                if not sym or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", sym):
+                    continue
+                target = mail_src if mod == "mail" else mcd_src
+                self.assertIn(sym, target,
+                              f"SCHEDULE.md 引用了 {mod}.{sym}，但源码里没有")
+
+        # 字段名必须与真实响应一致（实测是 availablePoint 不是 available）
+        if "query-my-account" in sched:
+            self.assertIn("availablePoint", sched,
+                          "积分字段名应为 availablePoint（实测），不是 available")
+            self.assertNotIn(".get('available')", sched,
+                             "SCHEDULE.md 仍在用错误的字段名 available")
 
     def test_readme_has_visual_hook(self):
         """首屏必须有邮件截图 —— 纯文字的项目在 Star 竞赛里没竞争力。"""
@@ -1402,52 +1472,81 @@ class TestMenuFiltering(unittest.TestCase):
 
 
 class TestQuoteDeduplication(unittest.TestCase):
-    """核价去重 —— 券版本会占满 top_k 坑位。"""
+    """核价去重 —— 必须发生在 top_k 截断**之前**。
 
-    def test_plan_quotes_dedups_identical_combos(self):
-        """同一商品的券版/非券版 combo 相同，只应请求一次。"""
-        from collector import plan_quotes
+    真实 bug：早期版本是「先截断再去重」，而券枚举把同一商品拆成
+    「无券+券1+券2」三个克隆体，常点商品底分高（+50）挤在一起占满 top_k，
+    2 张券时实测**只剩 4 款不同餐品**被核价。
+
+    ⚠️ 早期版本的测试只放1 张券（8/2 = 4 款，刚好卡过 `>= 4` 的断言），
+    反而把真问题掩盖了。所以这里必须覆盖**多张券**的场景。
+    """
+
+    def _snap(self, n_coupons, n_items=20):
         from mcd_adapter import MenuItem, Money, Coupon, Snapshot
-        from solver import DietaryPolicy, TasteProfile
         from decimal import Decimal as D
-
         m = Money(D("39"))
         menu = [MenuItem(f"C{i}", f"套餐{i}", "套餐", ("套餐",), m, m)
-                for i in range(5)]
-        coupons = [Coupon("S1", "券1", Money(D("500")), None, 3),
-                   Coupon("S2", "券2", Money(D("300")), None, 2)]
-        snap = Snapshot(fetched_at="2026-10-16 12:00:00", scene="delivery",
-                        store=None, menu=menu,
-                        my_coupons=coupons, store_coupons=[])
-        combos, picked = plan_quotes(snap, TasteProfile(),
-                                     DietaryPolicy(max_kcal=2000,
-                                                  max_sodium_mg=3000),
-                                     top_k=8)
-        from solver import combo_signature
-        sigs = [combo_signature(c) for c in combos]
-        self.assertEqual(len(sigs), len(set(sigs)),
-                         f"combos 里有重复签名：{sigs}")
-        self.assertLessEqual(len(sigs), len(picked))
-
-    def test_dedup_still_covers_multiple_items(self):
-        """去重后应仍覆盖多款不同餐品（而不是全塌缩成 1 个）。"""
-        from collector import plan_quotes
-        from mcd_adapter import MenuItem, Money, Coupon, Snapshot
-        from solver import DietaryPolicy, TasteProfile
-        from decimal import Decimal as D
-
-        m = Money(D("39"))
-        menu = [MenuItem(f"C{i}", f"套餐{i}", "套餐", ("套餐",), m, m)
-                for i in range(5)]
-        coupons = [Coupon("S1", "券1", Money(D("500")), None, 3)]
-        snap = Snapshot(fetched_at="2026-10-16 12:00:00", scene="delivery",
+                for i in range(n_items)]
+        coupons = [Coupon(f"S{j}", f"券{j}", Money(D("500")), None, 3)
+                   for j in range(n_coupons)]
+        return Snapshot(fetched_at="2026-10-16 12:00:00", scene="delivery",
                         store=None, menu=menu, my_coupons=coupons)
-        combos, _ = plan_quotes(snap, TasteProfile(),
-                                DietaryPolicy(max_kcal=2000, max_sodium_mg=3000),
-                                top_k=8)
-        self.assertGreaterEqual(len(combos), 4,
-                                "top_k=8 应覆盖多款餐品，而不是被同一商品的券版占满")
 
+    def _plan(self, n_coupons, top_k=8):
+        from collector import plan_quotes
+        from solver import DietaryPolicy, TasteProfile
+        snap = self._snap(n_coupons)
+        return plan_quotes(snap, TasteProfile(),
+                           DietaryPolicy(max_kcal=2000, max_sodium_mg=3000),
+                           top_k=top_k)
+
+    def test_no_duplicate_signatures(self):
+        """送核价的组合不允许有重复签名。"""
+        for n in (0, 1, 2, 3):
+            combos, _ = self._plan(n)
+            from solver import combo_signature
+            sigs = [combo_signature(c) for c in combos]
+            self.assertEqual(len(sigs), len(set(sigs)),
+                             f"{n} 张券时出现重复签名：{sigs}")
+
+    def test_two_coupons_still_fill_top_k(self):
+        """🔴 核心回归：2 张券时仍应覆盖满8 款不同餐品。
+
+        早期 bug：先截断再去重 → 2 张券只覆盖 4 款。
+        早期测试只放 1 张券（刚好 4 款卡过 >=4 断言）把这个 bug 掩盖了。
+        """
+        combos, _ = self._plan(2, top_k=8)
+        self.assertEqual(len(combos), 8,
+                         f"2 张券时只覆盖 {len(combos)} 款，应为 8 款 —— "
+                         "去重必须发生在 top_k 截断之前")
+
+    def test_three_coupons_still_fill_top_k(self):
+        """3 张券时克隆体更多，更容易把坑位占满。"""
+        combos, _ = self._plan(3, top_k=8)
+        self.assertEqual(len(combos), 8)
+
+    def test_fewer_items_than_top_k(self):
+        """候选不足 top_k 时，返回全部而非报错。"""
+        combos, _ = self._plan(2, top_k=20)
+        self.assertEqual(len(combos), 20, "菜单 20 项，top_k=20 应全覆盖")
+
+    def test_prefilter_itself_dedups(self):
+        """去重逻辑应在 prefilter_for_pricing 内部，而不是调用方事后补救。"""
+        from solver import (apply_preference, combo_signature,
+                            enumerate_coupon_combinations,
+                            prefilter_for_pricing, TasteProfile)
+        from solver import DietaryPolicy
+        snap = self._snap(2)
+        cands = apply_preference(snap.menu, TasteProfile())
+        cands = enumerate_coupon_combinations(
+            cands, snap.my_coupons, snap.store_coupons)
+        picked = prefilter_for_pricing(cands, top_k=8)
+        sigs = [combo_signature([(i.code, 1) for i in c.items]) for c in picked]
+        self.assertEqual(len(sigs), len(set(sigs)),
+                         f"prefilter 内部就应去重，实际返回了重复：{sigs}")
+        self.assertEqual(len(picked), 8,
+                         f"去重后应攒满 8 个不同签名，实际 {len(picked)}")
 
 class TestToolInventoryMatchesDocs(unittest.TestCase):
     """Tool 调用数必须与文档一致。
@@ -1504,6 +1603,130 @@ class TestToolInventoryMatchesDocs(unittest.TestCase):
                       "party-order-create", "draw-lottery", "auto-bind-coupons"}
         self.assertEqual(used & write_like, {"auto-bind-coupons"},
                          f"写操作类 Tool 应只有 auto-bind-coupons，实际：{used & write_like}")
+
+
+class TestSlotTimeBase(unittest.TestCase):
+    """调度档位的时间基准 —— 必须用 slot.hour，不能用真实时钟。
+
+    真实 bug：`--all` 预览时四个档位都用 datetime.now()，
+    实测 13:40 跑 `--all`，早间/午间/晚间/过期提醒**全部**说
+    「到饭点啦」，且早餐档把麦满分全过滤了。
+    这让 `--all` 预览（评审和陌生人的主要入口）基本失效。
+    """
+
+    def _snap(self):
+        class S:
+            orders = []
+            store_coupons = []
+            my_coupons = []
+            campaign_names = []
+        return S()
+
+    def test_slots_cover_different_meal_windows(self):
+        """四个档位应覆盖至少 3 个不同餐次窗口。"""
+        import scheduler
+        from mailer import current_meal_window
+        meals = {current_meal_window(s.hour) for s in scheduler.SLOTS}
+        self.assertGreaterEqual(len(meals), 3,
+                                f"四档只覆盖了 {meals} 个餐次，预览看不出差异")
+
+    def test_care_copy_differs_per_slot(self):
+        """不同档位应产生不同的关怀文案。"""
+        import scheduler
+        from mailer import _care_line
+        from datetime import datetime
+        now = datetime(2026, 10, 16, 13, 40, tzinfo=scheduler.CST)
+        titles = []
+        for slot in scheduler.SLOTS:
+            slot_dt = datetime(now.year, now.month, now.day,
+                               slot.hour, slot.minute, tzinfo=scheduler.CST)
+            care = scheduler.build_care_context(
+                self._snap(), slot, now=slot_dt)
+            titles.append(_care_line(care)[0])
+        self.assertEqual(len(set(titles)), len(titles),
+                         f"四档产生了重复文案：{titles}")
+
+    def test_morning_slot_says_breakfast_not_lunch(self):
+        """🔴 核心回归：13:40 跑 --all 时，早间档必须说早餐而不是午餐。"""
+        import scheduler
+        from mailer import _care_line
+        from datetime import datetime
+        now = datetime(2026, 10, 16, 13, 40, tzinfo=scheduler.CST)
+        morning = next(s for s in scheduler.SLOTS if s.key == "morning")
+        slot_dt = datetime(now.year, now.month, now.day,
+                           morning.hour, morning.minute, tzinfo=scheduler.CST)
+        care = scheduler.build_care_context(self._snap(), morning, now=slot_dt)
+        title, _ = _care_line(care)
+        self.assertEqual(care.meal, "breakfast",
+                         "09:00 档应属于早餐窗口")
+        self.assertNotIn("到饭点", title,
+                         f"早间档不应出现午餐文案：{title}")
+
+    def test_expiry_slot_uses_dinner_window(self):
+        """20:00 过期提醒档应归入晚餐/夜市窗口。"""
+        import scheduler
+        from mailer import current_meal_window
+        expiry = next(s for s in scheduler.SLOTS if s.key == "expiry")
+        self.assertEqual(current_meal_window(expiry.hour), "dinner")
+
+    def test_breakfast_items_survive_in_morning_slot(self):
+        """🔴 早间档不该过滤掉早餐品 —— 早期版本用真实时钟会误杀。"""
+        import scheduler
+        from solver import apply_preference, TasteProfile
+        from mcd_adapter import MenuItem, Money
+        from decimal import Decimal as D
+        from mailer import current_meal_window
+        m = Money(D("16"))
+        menu = [MenuItem("BM", "培根蛋麦满分", "早餐", ("早餐",), m, m)]
+        morning = next(s for s in scheduler.SLOTS if s.key == "morning")
+        meal = current_meal_window(morning.hour)
+        cands = apply_preference(menu, TasteProfile(), meal)
+        self.assertEqual(cands[0].rejected_by, None,
+                         "09:00 档不应过滤早餐品")
+
+
+class TestPreviewSite(unittest.TestCase):
+    """在线预览站 —— README 的链接不能指向不存在的页面。
+
+    这是 GitHub Pages 的入口（比赛只按 Star 排名，
+    让人不用 clone 就能看到效果是提升转化的关键一步），
+    但如果构建脚本坏了，README 里的链接就是一个死链。
+    """
+
+    def test_preview_script_exists(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.assertTrue(
+            os.path.exists(os.path.join(root, "scripts", "build_preview.py")),
+            "缺少 scripts/build_preview.py，README 的在线预览链接会失效")
+
+    def test_workflow_has_pages_deployment(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        wf = open(os.path.join(root, ".github", "workflows", "tests.yml"),
+                  encoding="utf-8").read()
+        for key in ("actions/upload-pages-artifact",
+                    "actions/deploy-pages",
+                    "scripts/build_preview.py"):
+            self.assertIn(key, wf, f"workflow 缺少 {key}")
+
+    def test_readme_links_to_preview(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        readme = open(os.path.join(root, "README.md"), encoding="utf-8").read()
+        self.assertRegex(
+            readme, r"https://f-cfan\.github\.io/mcd-meal-radar",
+            "README 首屏应给出在线预览链接 —— 路人不会 clone 仓库")
+
+    def test_out_preview_stays_ignored(self):
+        """⚠️ out/ 必须保持 gitignore。
+
+        out/ 里的邮件可能含用户偏好画像与地址，不能提交到公开仓库。
+        Pages 走 Actions artifact 上传，不经过 git ——
+        绝不能为了部署去放开这个忽略规则。
+        """
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        gitignore = open(os.path.join(root, ".gitignore"),
+                         encoding="utf-8").read()
+        self.assertRegex(gitignore, r"(?m)^out/",
+                         "out/ 必须保持忽略（含敏感数据）")
 
 
 if __name__ == "__main__":

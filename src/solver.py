@@ -468,7 +468,34 @@ def prefilter_for_pricing(
         rough = alive
 
     rough.sort(key=lambda c: c.score, reverse=True)
-    return rough[:top_k]
+
+    # ⚠️ **去重必须发生在截断之前** —— 这是个被外部评审抓到的真 bug。
+    #
+    # enumerate_coupon_combinations 会把同一商品拆成
+    # 「无券版 + 券1 版 + 券2 版」三个候选，它们的 combo 完全相同
+    # （都是 [(code, 1)]），但常点商品底分高（+50），于是这几个克隆体
+    # 会挤在一起占满 top_k 的坑位。
+    #
+    # 如果「先截断再去重」（早期版本），2 张券时结果是这样的：
+    #   候选池里前 3 名的 9 个克隆体塞满 top_k=8 → 去重后只剩 3 款餐品
+    # 正确做法是边去重边攒，攒够 top_k 个**不同商品**：
+    #   实测 2 张券时能覆盖 7~8 款不同餐品
+    #
+    # 去重只影响「送去核价的请求」，不影响候选本身 ——
+    # 券版与非券版共用同一个 calculate-price 结果，符合官方语义
+    # （calculate-price 入参不接 couponId，券的抵扣体现在返回的 discount 里）。
+    picked: list[Candidate] = []
+    seen: set[str] = set()
+    for c in rough:
+        sig = combo_signature([(i.code, 1) for i in c.items])
+        if sig in seen:
+            continue
+        seen.add(sig)
+        picked.append(c)
+        if len(picked) >= top_k:
+            break
+
+    return picked
 
 
 def solve(snapshot: Snapshot, profile: TasteProfile, policy: DietaryPolicy,

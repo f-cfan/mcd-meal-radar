@@ -27,6 +27,11 @@ Thumbs.db
 *.swp
 
 # 运行时产物
+#
+# ⚠️ 保持忽略：out/ 里的邮件可能含用户偏好画像与地址等敏感信息，
+# **不能提交到仓库**。GitHub Pages 的在线预览由 CI 用
+# `actions/upload-pages-artifact` 直接上传，不经过 git ——
+# 所以这里**不要**为部署去放开 out/ 或 out/preview/。
 out/
 logs/
 data/

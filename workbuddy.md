@@ -101,7 +101,7 @@
 | 维度 | 评估 |
 |---|---|
 | 赛道 | 全场唯一「主动推送」形态，0 竞争 |
-| 技术可行性 | 7 个只读 Tool + 1 个领券 Tool，全部够用 |
+| 技术可行性 | 10 个只读 Tool + 1 个领券 Tool，全部够用 |
 | 使用频率 | 每天 4 次，有真实留存价值 |
 | 演示可行性 | 可通过 fixtures 完全离线复现 |
 
@@ -308,7 +308,7 @@ cands = apply_nutrition(cands, ...)
 
 ## 测试覆盖
 
-117 个单测，全部零依赖、零 Token、零网络：
+131 个单测，全部零依赖、零 Token、零网络：
 
 ```
 TestUnitTrap          5 个  单位换算防回归（分 vs 元）
@@ -322,7 +322,7 @@ TestNoOrderingTools   1 个  扫描源码确保无下单调用
 ```
 
 ```
-Ran 117 tests in 0.043s
+Ran 131 tests in 0.043s
 OK
 ```
 
@@ -332,7 +332,7 @@ OK
 
 ```bash
 python demo.py            # 四条链路，零 Token
-python tests/test_all.py  # 117 个单测
+python tests/test_all.py  # 131 个单测
 python scheduler.py --fixture --all   # 四档任务，零 Token
 ```
 
@@ -344,7 +344,7 @@ python scheduler.py --fixture --all   # 四档任务，零 Token
 
 | 规则要求 | 本项目状态 |
 |---|---|
-| 真实使用麦当劳 MCP | ✅ 使用 7 个只读 Tool + 1 个领券 Tool |
+| 真实使用麦当劳 MCP | ✅ 使用 10 个只读 Tool + 1 个领券 Tool |
 | 仓库公开可访问 | ✅ Public |
 | 仓库创建时间在规定区间内 | ✅ 2026-10-15 |
 | 不含真实 Token / 密钥 | ✅ 全部走环境变量，CI 有扫描 |

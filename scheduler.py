@@ -203,14 +203,20 @@ def run_slot(
     mode: str = "fixture",
     do_send: bool = False,
     outdir: str = "out",
+    now: datetime | None = None,
 ) -> dict:
     """执行一个档位任务。返回执行摘要。
 
     **核心纪律**：无论何种模式，本函数都不调用任何下单类工具。
     推荐归推荐，下单权始终在人。
+
+    `now` 默认为真实当前时间；它的**日期部分**用于计算漏餐等信号，
+    而**时间部分由 slot.hour/minute 决定**（见下方说明），
+    这样 `--all` 预览时每档呈现各自的时段特征。
     """
     import os
     os.makedirs(outdir, exist_ok=True)
+    now = now or datetime.now(CST)
 
     # 1) 抓数据（外送场景的 address_id 由 collector 按 MCD_ADDRESS_ID /
     #    MCD_ADDRESS_PICK 解析，见 _pick_address 的注释）
@@ -229,8 +235,20 @@ def run_slot(
         # ① 零成本预筛：先决定「问哪些组合的价」，不发请求。
         #    早期版本是「先核价再筛选」，导致邮件里 59/77 显示未核价 ——
         #    那是没做完，不是诚实。
-        # 当前餐次 —— 用于过滤「晚餐推荐麦满分」这类时段错配
-        meal_now = current_meal_window(datetime.now(CST).hour)
+        # ── 本档位的时间基准 ─────────────────────────────────────
+        # ⚠️ **必须用 slot 的绑定时刻，不能用真实时钟**。
+        # 早期版本两处都调 datetime.now()，于是：
+        #   · 13:40 跑 `--all` 时，早间档（09:00）也算成lunch，
+        #     早餐品被全部过滤，关怀语也说「到饭点啦」
+        #   · 四个档位生成出**完全相同**的文案与菜单
+        # 也就是说 `--all` 预览功能基本失效 —— 而它恰恰是
+        # 评审和陌生人了解项目的主要入口。
+        #
+        # 真实定时运行时 slot.hour 与当下时间一致（cron 按点触发），
+        # 所以这个改动对生产无影响，只修正了「手动跑/预览」的语义。
+        slot_dt = datetime(now.year, now.month, now.day,
+                           slot.hour, slot.minute, tzinfo=CST)
+        meal_now = current_meal_window(slot.hour)
 
         price_table, breakdowns = {}, {}
         if mode == "live" and snap.menu and not snap.degraded:
@@ -253,8 +271,8 @@ def run_slot(
         html = render_token_expired("", snap.degrade_reason or "Token 失效")
         text = "MCP Token 已失效，请到 open.mcd.cn/mcp 重新获取并更新 MCD_MCP_TOKEN。"
     else:
-        subject = f"【麦麦饭点雷达】{slot.label}建议 · {datetime.now(CST):%m-%d}"
-        care = build_care_context(snap, slot)
+        subject = f"【麦麦饭点雷达】{slot.label}建议 · {slot_dt:%m-%d}"
+        care = build_care_context(snap, slot, now=slot_dt)
         html = render_digest(decision, snap, profile_text, slot.label, care=care)
         text = render_plain(decision, snap, slot.label, care=care)
 

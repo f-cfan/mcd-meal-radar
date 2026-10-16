@@ -6,6 +6,15 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   test:
     runs-on: ${{ matrix.os }}
@@ -58,20 +67,34 @@ jobs:
           fi
           echo "✅ 未发现真实凭证"
 
-  demo-preview:
+  # ── 在线预览站 ──────────────────────────────────────────────
+  # 为什么要这个：比赛只按 Star 排名，评委和路人大多用手机点开链接、
+  # 快速划一眼就走，不会真的 clone 仓库跑 demo。把邮件效果做成可直接
+  # 打开的网页，是当前提升 Star 转化最直接的一步。
+  preview:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: 生成邮件预览产物
-        run: python demo.py
+      - name: 构建预览站（零依赖，无需 Token）
+        run: python scripts/build_preview.py
 
-      - name: 上传邮件预览
-        uses: actions/upload-artifact@v4
+      - name: 上传 Pages 产物
+        uses: actions/upload-pages-artifact@v3
         with:
-          name: email-preview
-          path: out/*.html
-          retention-days: 30
+          path: out/preview
+
+  deploy:
+    needs: preview
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: 部署到 GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4
