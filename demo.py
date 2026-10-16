@@ -201,6 +201,38 @@ def demo_d() -> None:
     print("详见 MCP_INTEGRATION.md 的「单位陷阱」章节。")
 
 
+def demo_e() -> None:
+    """链路 E：中国国家法定节假日内容风格与专属背景素材库。"""
+    hr("链路 E · 中国国家法定节假日主题与素材库（7 大法定假日）")
+
+    from festivals import get_festival, list_statutory_festivals
+    from mailer import CareContext
+
+    festivals = list_statutory_festivals()
+    print(f"内置国家法定节假日素材库：共 {len(festivals)} 个节日（assets/festivals/）")
+    for f in festivals:
+        print(f"  · {f.badge:<18} 背景素材：assets/festivals/{f.bg_image}")
+
+    fest = get_festival("spring_festival")
+    snap = load_snapshot_from_fixtures(scene="delivery")
+    profile = TasteProfile(order_count=4)
+    policy = DietaryPolicy()
+    decision = solve(snap, profile, policy, load_price_table_from_fixtures(),
+                     meal="dinner", festival=fest)
+    care = CareContext(meal="dinner", hour=18, festival=fest)
+
+    html = render_digest(decision, snap, "基于你的 4 笔历史订单", "晚间",
+                         care=care, festival=fest)
+    os.makedirs(OUT, exist_ok=True)
+    path = os.path.join(OUT, "demo_festival_spring.html")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(html)
+
+    print()
+    print(f"春节特辑邮件预览已生成 → {path}")
+    print("可通过 `python scheduler.py --fixture --festival <节日名>` 随时切换任意法定节假日主题。")
+
+
 def main() -> int:
     print()
     print("麦麦饭点雷达 · mcd-meal-radar")
@@ -213,6 +245,7 @@ def main() -> int:
         demo_b()
         demo_c()
         demo_d()
+        demo_e()
     except (MCPError, FileNotFoundError, KeyError) as exc:
         print()
         print(f"演示中断：{type(exc).__name__}: {exc}")
@@ -221,13 +254,13 @@ def main() -> int:
 
     hr("演示完成")
     print("生成的文件：")
-    for f in ("demo_digest.html", "demo_token_expired.html"):
+    for f in ("demo_digest.html", "demo_token_expired.html", "demo_festival_spring.html"):
         p = os.path.join(OUT, f)
         if os.path.exists(p):
             print(f"  {p}")
     print()
     print("下一步：")
-    print("  1. 用浏览器打开 out/demo_digest.html 看邮件真实效果")
+    print("  1. 用浏览器打开 out/demo_digest.html 与 out/demo_festival_spring.html 看邮件效果")
     print("  2. 接入真实数据：配置 MCD_MCP_TOKEN 后运行 scheduler.py --live --all")
     print("  3. 配置 SMTP 后运行 scheduler.py --fixture --send 实际发一封试试")
     return 0

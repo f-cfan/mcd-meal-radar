@@ -16,6 +16,7 @@ from dataclasses import dataclass
 import html
 from datetime import datetime, timezone, timedelta
 
+from festivals import FestivalSpec, resolve_festival_bg_url
 from mcd_adapter import Coupon, Money, Nutrition, Snapshot
 from solver import Candidate, Decision
 
@@ -66,9 +67,17 @@ def render_digest(
     profile_summary: str = "",
     slot: str = "午间",
     care: CareContext | None = None,
+    festival: FestivalSpec | None = None,
+    asset_base_url: str | None = None,
 ) -> str:
-    """渲染主推送邮件。"""
+    """渲染主推送邮件（支持中国国家法定节假日主题风格与节日素材背景图）。"""
     now = datetime.now(CST)
+    fest = festival or (care.festival if care is not None else None)
+    page_bg = fest.palette.page_bg if fest else CLR["bg"]
+    card_bg = fest.palette.card_bg if fest else CLR["card"]
+    accent_clr = fest.palette.accent if fest else CLR["accent"]
+    ok_bg = fest.palette.care_bg if fest else CLR["ok_bg"]
+
     expiring = _expiring_coupons(snapshot.store_coupons or snapshot.my_coupons)
 
     rows: list[str] = []
@@ -92,7 +101,7 @@ def render_digest(
         </td></tr>""")
     else:
         rows.append(f"""
-        <tr><td style="padding:14px 20px;background:{CLR["ok_bg"]};border-left:3px solid {CLR["accent"]}">
+        <tr><td style="padding:14px 20px;background:{ok_bg};border-left:3px solid {accent_clr}">
           <span style="font-size:13px;color:{CLR["ink"]}">暂无 3 天内到期的券</span>
         </td></tr>""")
 
@@ -117,7 +126,7 @@ def render_digest(
           <div style="font-size:17px;font-weight:500;color:{CLR["ink"]};margin-bottom:4px">
             {_e(best.name)}
           </div>
-          <div style="font-size:20px;color:{CLR["accent"]};margin-bottom:8px">{price_cell}</div>
+          <div style="font-size:20px;color:{accent_clr};margin-bottom:8px">{price_cell}</div>
           {coupon_line}
           <div style="font-size:13px;color:{CLR["muted"]};line-height:1.9">
             热量 {n["kcal"]} · 蛋白 {n["protein"]} · 钠 {n["sodium"]}
@@ -137,7 +146,7 @@ def render_digest(
                 if key in seen:
                     continue
                 seen.add(key)
-                coupon = f'<span style="color:{CLR["accent"]}"> · {_e(a.coupon.title)}</span>' if a.coupon else ""
+                coupon = f'<span style="color:{accent_clr}"> · {_e(a.coupon.title)}</span>' if a.coupon else ""
                 alt_rows.append(
                     f'<tr><td style="padding:6px 20px;font-size:13px;color:{CLR["ink"]}">'
                     f'{_e(a.name)}{coupon}'
@@ -184,34 +193,56 @@ def render_digest(
           本次为缓存/降级数据，非实时。所有金额与库存以官方页面为准。
         </td></tr>"""
 
-    notes = ""
-    if decision.notes:
-        notes = ('<div style="font-size:12px;color:' + CLR["muted"] +
-                 ';margin-top:8px">' + _e("；".join(decision.notes)) + '</div>')
-
     # ⚠️ 必须是完整的 <tr><td>…</td></tr>，不能是裸 <div>。
-    # HTML5 解析规范下，<table> 里直接出现的裸 <div> 会触发 **foster parenting**
-    # —— 浏览器把它强行提升到整个 <table> 之前，于是这句画像摘要会飞到邮件卡片
-    # 顶部的灰色背景上（这个 bug 真实发生过，被外部评审从截图里看出来的）。
     profile_line = (
         '<tr><td style="padding:0 20px 14px;font-size:12px;color:'
         f'{CLR["muted"]}">{_e(profile_summary)}</td></tr>'
     ) if profile_summary else ""
 
-    return _wrap(f"""
-    <table width="100%" cellspacing="0" cellpadding="0" style="background:{CLR['bg']}">
-      <tr><td align="center" style="padding:24px 12px">
-        <table width="560" cellspacing="0" cellpadding="0"
-               style="background:{CLR['card']};border-radius:12px;overflow:hidden">
-
+    if fest is not None:
+        bg_url = resolve_festival_bg_url(fest, asset_base_url)
+        header_row = f"""
+          <tr><td background="{_e(bg_url)}"
+                  style="background-image:url('{_e(bg_url)}');background-size:cover;background-position:center top;background-repeat:no-repeat;padding:0">
+            <table width="100%" cellspacing="0" cellpadding="0"
+                   style="background:{fest.palette.hero_overlay}">
+              <tr><td style="padding:110px 20px 18px">
+                <div style="margin-bottom:8px">
+                  <span style="display:inline-block;padding:4px 11px;border-radius:999px;background:{fest.palette.badge_bg};color:{fest.palette.badge_ink};font-size:12px;font-weight:600">
+                    {_e(fest.badge)}
+                  </span>
+                  <span style="font-size:11px;color:{fest.palette.care_ink};margin-left:6px">
+                    {_e(fest.statutory_note)}
+                  </span>
+                </div>
+                <div style="font-size:17px;font-weight:600;color:{CLR['ink']}">
+                  麦麦饭点雷达 · {_e(fest.name)}特辑
+                </div>
+                <div style="font-size:13px;color:{fest.palette.care_ink};margin-top:4px;line-height:1.7">
+                  {_e(fest.greeting_headline)}
+                </div>
+                <div style="font-size:12px;color:{CLR['muted']};margin-top:4px">
+                  {now.strftime('%Y-%m-%d')} · {slot} · 基于麦当劳官方 MCP 实时数据
+                </div>
+              </td></tr>
+            </table>
+          </td></tr>"""
+    else:
+        header_row = f"""
           <tr><td style="padding:20px">
             <div style="font-size:15px;font-weight:500;color:{CLR['ink']}">麦麦饭点雷达</div>
             <div style="font-size:12px;color:{CLR['muted']};margin-top:4px">
               {now.strftime('%Y-%m-%d')} · {slot} · 基于麦当劳官方 MCP 实时数据
             </div>
-          </td></tr>
+          </td></tr>"""
 
-          {render_care(care) if care else ""}
+    return _wrap(f"""
+    <table width="100%" cellspacing="0" cellpadding="0" style="background:{page_bg}">
+      <tr><td align="center" style="padding:24px 12px">
+        <table width="560" cellspacing="0" cellpadding="0"
+               style="background:{card_bg};border-radius:12px;overflow:hidden">
+          {header_row}
+          {render_care(care, festival=fest) if care else ""}
           {"".join(rows)}
 
           <tr><td style="padding:14px 20px;border-top:1px solid {CLR['line']};font-size:12px;color:{CLR['muted']}">
@@ -228,7 +259,7 @@ def render_digest(
 
         </table>
       </td></tr>
-    </table>""")
+    </table>""", bg_color=page_bg)
 
 
 def render_token_expired(email: str, error_detail: str, cached_summary: str = "") -> str:
@@ -277,9 +308,14 @@ def render_token_expired(email: str, error_detail: str, cached_summary: str = ""
 
 
 def render_plain(decision: Decision, snapshot: Snapshot, slot: str = "午间",
-                 care: CareContext | None = None) -> str:
+                 care: CareContext | None = None,
+                 festival: FestivalSpec | None = None) -> str:
     """纯文本版。用于终端演示与不支持 HTML 的客户端。"""
     lines: list[str] = []
+    fest = festival or (care.festival if care is not None else None)
+    if fest is not None:
+        lines.append(f"【{fest.badge}】{fest.greeting_headline}")
+        lines.append("")
     if care:
         title, body = _care_line(care)
         lines.extend([title, body, ""])
@@ -324,12 +360,13 @@ def _expiring_coupons_safe(snapshot: Snapshot) -> list[Coupon]:
     return _expiring_coupons(snapshot.store_coupons or snapshot.my_coupons)
 
 
-def _wrap(inner: str) -> str:
+def _wrap(inner: str, bg_color: str | None = None) -> str:
+    bg = bg_color or CLR["bg"]
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>麦麦饭点雷达</title></head>
-<body style="margin:0;padding:0;background:{CLR['bg']}">
+<body style="margin:0;padding:0;background:{bg}">
 {inner}
 </body></html>"""
 
@@ -364,6 +401,7 @@ class CareContext:
     minutes_since_last_order: int | None = None   # None = 无历史订单，不提
     is_weekend: bool = False
     skipped_meals: int = 0        # 依据：历史订单里当天缺失的餐次
+    festival: FestivalSpec | None = None  # 依据：中国国家法定节假日日历命中或显式指定
 
 
 def _care_core(ctx: CareContext) -> tuple[str, str]:
@@ -414,6 +452,10 @@ def _care_core(ctx: CareContext) -> tuple[str, str]:
             "还没睡呀",
             "夜里的选择不多，但热乎的还是有的 —— 吃完早点休息。",
         )
+
+    # ── 国家法定节假日应景关怀（当日历命中或显式指定节日时） ─────
+    if ctx.festival is not None:
+        return ctx.festival.greeting_for_meal(ctx.meal)
 
     # ── 按时段 ─────────────────────────────────────────────────
     if ctx.meal == "breakfast":
@@ -478,7 +520,16 @@ def _care_line(ctx: CareContext) -> tuple[str, str]:
 
     活动**不抢占标题**：它在邮件下方已有独立区块，
     关怀是入口，不该被信息类内容挤掉。
+
+    ⚠️ 节日模式下**不追加**活动后缀 ——
+    节日文案本身就是完整的一段（如「过年好 —— 忙了一整年…」），
+    再接一句「顺手也把门店好消息给你标出来了」会显得拖沓且重复。
+    活动在节日邮件里由独立区块承载，不该再口头提一次。
     """
+    # ctx.festival 非空表示正在用节日专属文案（render_care 注入的标记）
+    if getattr(ctx, "festival", None) is not None:
+        title, body = _care_core(ctx)
+        return title, body
     title, body = _care_core(ctx)
     if ctx.campaign_count > 0:
         body += " 顺手也把门店这边的好消息给你标出来了。"
@@ -500,7 +551,7 @@ def nutrition_note(n) -> str:
     return ""
 
 
-def render_care(ctx: CareContext) -> str:
+def render_care(ctx: CareContext, festival: FestivalSpec | None = None) -> str:
     """渲染关怀区块（HTML）。
 
     视觉上刻意做得**柔一点**：暖白底、圆角、无硬边框，
@@ -510,17 +561,25 @@ def render_care(ctx: CareContext) -> str:
     但仍保持两行 —— 关怀是入口，不是主体。
     邮件的主角始终是有用的建议，不是煽情的文案。
     """
+    fest = festival or ctx.festival
+    if fest is not None and ctx.festival is None:
+        from dataclasses import replace
+        ctx = replace(ctx, festival=fest)
     title, body = _care_line(ctx)
+    care_bg = fest.palette.care_bg if fest else "#FFF8EE"
+    title_clr = fest.palette.care_ink if fest else "#8A4B0F"
+    body_clr = fest.palette.care_ink if fest else "#6B5A48"
+    border_css = f";border-left:3px solid {fest.palette.care_border}" if fest else ""
     return f"""
         <tr><td style="padding:0 16px 4px">
           <table width="100%" cellspacing="0" cellpadding="0"
-                 style="background:#FFF8EE;border-radius:12px">
+                 style="background:{care_bg};border-radius:12px{border_css}">
             <tr><td style="padding:20px 18px 18px">
-              <div style="font-size:15px;font-weight:600;color:#8A4B0F;margin-bottom:6px;
+              <div style="font-size:15px;font-weight:600;color:{title_clr};margin-bottom:6px;
                           line-height:1.5">
                 <span style="font-size:14px;margin-right:6px">&#9788;</span>{_e(title)}
               </div>
-              <div style="font-size:13px;color:#6B5A48;line-height:1.85">
+              <div style="font-size:13px;color:{body_clr};line-height:1.85">
                 {_e(body)}
               </div>
             </td></tr>

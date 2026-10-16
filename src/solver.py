@@ -488,6 +488,41 @@ def apply_budget(candidates: list[Candidate], policy: DietaryPolicy) -> list[Can
             cand.rejected_by = f"预算：实付 {cand.quoted_price} 超过 {policy.budget_yuan}"
     return candidates
 
+
+def apply_festival_boost(
+    candidates: list[Candidate],
+    festival: object | None = None,
+) -> list[Candidate]:
+    """中国国家法定节假日应景加分（温和软加权，不突破营养与预算硬上限）。
+
+    当命中法定节假日时，对契合节日聚餐、出行或时令解腻场景的标签或关键词
+    加一个温和分值（+8~10 分），并在 reasons 中写入可解释说明。
+    """
+    if festival is None:
+        return candidates
+    boost_tags = set(getattr(festival, "boost_tags", ()) or ())
+    boost_keywords = tuple(getattr(festival, "boost_keywords", ()) or ())
+    boost_score = Decimal(int(getattr(festival, "boost_score", 8) or 8))
+    boost_reason = str(getattr(festival, "boost_reason", "") or "")
+    if not (boost_tags or boost_keywords):
+        return candidates
+
+    for cand in candidates:
+        if cand.rejected_by:
+            continue
+        hit_tag = any(
+            tag in boost_tags
+            for item in cand.items
+            for tag in item.tags
+        )
+        hit_kw = any(kw in cand.name for kw in boost_keywords)
+        if hit_tag or hit_kw:
+            cand.score += boost_score
+            if boost_reason and boost_reason not in cand.reasons:
+                cand.reasons.append(boost_reason)
+    return candidates
+
+
 # --------------------------------------------------------------------------
 # 零成本预筛（决定「值得花钱核价的是哪几个」）
 # --------------------------------------------------------------------------
@@ -564,7 +599,8 @@ def prefilter_for_pricing(
 def solve(snapshot: Snapshot, profile: TasteProfile, policy: DietaryPolicy,
           price_table: dict[str, Money] | None = None,
           breakdowns: dict[str, dict] | None = None,
-          meal: str = "") -> Decision:
+          meal: str = "",
+          festival: object | None = None) -> Decision:
     """四层依次求解，返回带解释的决策。
 
     price_table 是 calculate-price 的真实返回（签名 → Money）。
@@ -600,6 +636,7 @@ def solve(snapshot: Snapshot, profile: TasteProfile, policy: DietaryPolicy,
     cands = apply_nutrition(cands, snapshot.nutrition, policy)
     cands = apply_campaign(cands, snapshot)
     cands = apply_budget(cands, policy)
+    cands = apply_festival_boost(cands, festival)
     # 口味轮换放在最后：前几层筛完后，只对真正有机会当选的候选降权
     cands = apply_rotation(cands)
 

@@ -2153,5 +2153,311 @@ class TestTasteRotation(unittest.TestCase):
             self.assertEqual(got[0]["at"], stamp.isoformat())
 
 
+class TestStatutoryFestivals(unittest.TestCase):
+    """中国国家法定节假日内容风格与背景素材库测试（7 大法定假日）。"""
+
+    def test_all_seven_statutory_festivals_defined(self):
+        """必须完整覆盖国务院规定的 7 大全体公民放假法定节假日。"""
+        from festivals import STATUTORY_FESTIVAL_KEYS, list_statutory_festivals
+        specs = list_statutory_festivals()
+        self.assertEqual(len(specs), 7)
+        self.assertEqual(tuple(s.key for s in specs), STATUTORY_FESTIVAL_KEYS)
+
+    def test_every_festival_has_existing_bg_image_asset(self):
+        """assets/festivals/ 素材库下每个法定节假日都必须有对应的真实背景图片文件。"""
+        from festivals import list_statutory_festivals
+        for spec in list_statutory_festivals():
+            self.assertTrue(
+                spec.image_path.exists(),
+                f"缺少节日背景图素材：{spec.image_path}",
+            )
+            self.assertGreater(
+                spec.image_path.stat().st_size,
+                10_000,
+                f"节日背景图过小或损坏：{spec.image_path}",
+            )
+
+    def test_solar_statutory_holiday_detection(self):
+        """公历固定国家法定节假日（元旦、清明、劳动节、国庆）应自动命中。"""
+        from festivals import detect_festival
+        self.assertEqual(detect_festival("2026-01-01").key, "new_year")
+        self.assertEqual(detect_festival("2026-04-05").key, "qingming")
+        self.assertEqual(detect_festival("2026-05-01").key, "labor_day")
+        self.assertEqual(detect_festival("2026-10-01").key, "national_day")
+        self.assertIsNone(detect_festival("2026-10-16"))
+
+    def test_lunar_statutory_holiday_detection(self):
+        """农历国家法定节假日（春节、端午、中秋）查表识别，且中秋与国庆重叠时优先中秋。"""
+        from festivals import detect_festival
+        self.assertEqual(detect_festival("2026-02-17").key, "spring_festival")
+        self.assertEqual(detect_festival("2026-06-19").key, "dragon_boat")
+        self.assertEqual(detect_festival("2026-09-25").key, "mid_autumn")
+        # 2025-10-06 是农历八月十五中秋，虽在 10.1-10.7 之间，应优先识别为中秋
+        self.assertEqual(detect_festival("2025-10-06").key, "mid_autumn")
+
+    def test_chinese_and_english_aliases_resolve(self):
+        """支持英文 key 与中文节日名称/别名解析。"""
+        from festivals import get_festival
+        pairs = {
+            "元旦": "new_year",
+            "春节": "spring_festival",
+            "除夕": "spring_festival",
+            "清明": "qingming",
+            "五一": "labor_day",
+            "劳动节": "labor_day",
+            "端午": "dragon_boat",
+            "中秋": "mid_autumn",
+            "国庆": "national_day",
+            "十一": "national_day",
+        }
+        for alias, expected in pairs.items():
+            spec = get_festival(alias)
+            self.assertIsNotNone(spec, f"别名 {alias} 未能解析")
+            self.assertEqual(spec.key, expected)
+
+    def test_festival_copy_respects_contest_redlines(self):
+        """赛事红线与风格纪律：所有节日文案不得含竞品对比，也不得出现说教/催促词。"""
+        from festivals import list_statutory_festivals
+        banned_brands = ("肯德基", "KFC", "汉堡王", "星巴克", "必胜客", "更便宜", "比别家")
+        harsh_words = ("必须", "一定要", "赶紧", "马上", "你的身体垮", "危害健康")
+        for spec in list_statutory_festivals():
+            texts = [spec.greeting_headline, spec.greeting_body, spec.boost_reason]
+            for meal, (t, b) in spec.slot_greetings.items():
+                texts.extend([t, b])
+            blob = " ".join(texts)
+            for w in banned_brands:
+                self.assertNotIn(w, blob, f"{spec.name} 文案触碰品牌对比红线：{w}")
+            for w in harsh_words:
+                self.assertNotIn(w, blob, f"{spec.name} 文案出现说教用词：{w}")
+
+    def test_festival_renders_background_image_and_theme_in_html(self):
+        """节日邮件必须引用对应背景图并遵守 <table> 内无裸 <div> 的结构约束。"""
+        import re
+        from festivals import get_festival
+        from mailer import CareContext, render_digest
+        from mcd_adapter import Snapshot
+        from solver import Decision
+        fest = get_festival("spring_festival")
+        snap = Snapshot(fetched_at="2026-02-17 12:00:00", scene="delivery",
+                        store=None, menu=[])
+        care = CareContext(meal="lunch", hour=12, festival=fest)
+        html = render_digest(Decision(None, [], [], []), snap, "", "午间",
+                             care=care, festival=fest)
+        self.assertIn("spring_festival.png", html)
+        self.assertIn("background-image:url(", html)
+        self.assertIn("春节特辑", html)
+        self.assertIn(fest.palette.page_bg, html)
+        for m in re.finditer(r"<table\b", html):
+            window = html[m.end():m.end() + 300]
+            first = re.search(r"<(tr|td|div)\b", window)
+            if first:
+                self.assertNotEqual(first.group(1), "div",
+                                    "节日邮件 <table> 后不能直接跟裸 <div>")
+
+    def test_festival_boost_adds_score_and_explainable_reason(self):
+        """节日应景加分应提升匹配餐品分数并附带可解释理由。"""
+        from decimal import Decimal as D
+        from festivals import get_festival
+        from mcd_adapter import MenuItem, Money
+        from solver import TasteProfile, apply_festival_boost, apply_preference
+        m = Money(D("39"))
+        items = [
+            MenuItem("C1", "金拱门虾堡四件套", "套餐", ("人气经典",), m, m),
+            MenuItem("C2", "普通圆筒", "其他", (), m, m),
+        ]
+        cands = apply_preference(items, TasteProfile())
+        fest = get_festival("spring_festival")
+        apply_festival_boost(cands, fest)
+        self.assertGreater(cands[0].score, cands[1].score)
+        self.assertIn(fest.boost_reason, cands[0].reasons)
+
+    def test_combo_nutrition_does_not_wipe_accumulated_fields_on_none(self):
+        """回归保护：后续子项缺某字段（None）时，不能抹掉前面子项已累加出的数值。"""
+        from mcd_adapter import Nutrition, build_nutrition_alias_index, nutrition_from_combo
+        by_name = {
+            "中薯条": Nutrition(kcal=289, protein_g=4, calcium_mg=20),
+            "麦乐鸡5块": Nutrition(kcal=213, protein_g=12, calcium_mg=None),
+        }
+        detail = {
+            "code": "T1", "name": "测试套餐",
+            "groups": [
+                {"title": "小食一", "pick": 1, "default": {"code": "1", "name": "中薯条"}, "alternatives": []},
+                {"title": "小食二", "pick": 1, "default": {"code": "2", "name": "麦乐鸡5块"}, "alternatives": []},
+            ],
+        }
+        total, _, _ = nutrition_from_combo(detail, by_name, build_nutrition_alias_index(by_name))
+        self.assertEqual(total.kcal, 502)
+        self.assertEqual(total.calcium_mg, 20, "前面子项已有的钙含量不应被后续子项的 None 抹成 None")
+
+
+class TestFestivalRobustness(unittest.TestCase):
+    """节日模块的健壮性 —— 用户手输错参数不该让定时任务崩掉。
+
+    背景：`--festival` 是命令行参数，`--festival 123` 会把 int 传进来，
+    早期版本直接调 `.strip()` 抛 AttributeError —— 整条调度链断掉。
+    """
+
+    def test_non_string_override_does_not_crash(self):
+        """🔴 非字符串输入必须优雅降级。"""
+        from festivals import detect_festival
+        from datetime import date
+        for bad in (123, 0, 3.14, ["x"], {"a": 1}, object()):
+            try:
+                r = detect_festival(date(2026, 10, 1), override_key=bad)
+                self.assertIsNone(r, f"{bad!r} 应被忽略并返回 None")
+            except Exception as exc:
+                self.fail(f"{bad!r} 导致崩溃：{type(exc).__name__}: {exc}")
+
+    def test_unknown_key_returns_none_not_silent_date_fallback(self):
+        """🔴 显式指定了未知节日必须返回 None，不能静默按日期回退。
+
+        否则用户以为在看春节主题，实际看到日常样式却找不到原因。
+        """
+        from festivals import detect_festival
+        from datetime import date
+        # 10/1 本身是国庆，若静默回退会返回 national_day
+        r = detect_festival(date(2026, 10, 1), override_key="春節")
+        self.assertIsNone(r, "未知 key 应返回 None 而非按日期检测")
+
+    def test_none_and_empty_fall_back_to_date(self):
+        """未指定节日时按日期检测 —— 这是正确行为。"""
+        from festivals import detect_festival
+        from datetime import date
+        self.assertEqual(detect_festival(date(2026, 10, 1),
+                                      override_key=None).key, "national_day")
+        self.assertEqual(detect_festival(date(2026, 10, 1),
+                                      override_key="").key, "national_day")
+
+    def test_explicit_off_switches_festival_off(self):
+        """off/none/0/false 应显式关闭节日主题。"""
+        from festivals import detect_festival
+        from datetime import date
+        for off in ("off", "none", "0", "false", "OFF"):
+            self.assertIsNone(
+                detect_festival(date(2026, 10, 1), override_key=off),
+                f"{off!r} 应关闭节日主题")
+
+    def test_valid_aliases_all_resolve(self):
+        """中文名与英文 key 都应命中同一节日。"""
+        from festivals import get_festival
+        pairs = [("春节", "spring_festival"), ("spring_festival", "spring_festival"),
+                 ("中秋", "mid_autumn"), ("mid_autumn", "mid_autumn"),
+                 ("国庆", "national_day"), ("十一", "national_day"),
+                 ("端午", "dragon_boat"), ("清明", "qingming"),
+                 ("劳动节", "labor_day"), ("元旦", "new_year")]
+        for alias, key in pairs:
+            spec = get_festival(alias)
+            self.assertIsNotNone(spec, f"{alias} 应能解析")
+            self.assertEqual(spec.key, key)
+
+    def test_official_2026_holiday_ranges(self):
+        """🔴 2026 法定假期必须与国务院办公厅通知一致。
+
+        依据：国办发明电〔2025〕7 号
+          元旦 1/1–1/3 · 春节 2/15–2/23 · 清明 4/4–4/6
+          劳动节 5/1–5/5 · 端午 6/19–6/21 · 中秋 9/25–9/27 · 国庆 10/1–10/7
+        这类事实性数据一旦漂移就是内容错误，日期表是手工维护的。
+        """
+        from festivals import detect_festival
+        from datetime import date, timedelta
+        official = {
+            "new_year":        ("2026-01-01", "2026-01-03"),
+            "spring_festival": ("2026-02-15", "2026-02-23"),
+            "qingming":        ("2026-04-04", "2026-04-06"),
+            "labor_day":       ("2026-05-01", "2026-05-05"),
+            "dragon_boat":     ("2026-06-19", "2026-06-21"),
+            "mid_autumn":      ("2026-09-25", "2026-09-27"),
+            "national_day":    ("2026-10-01", "2026-10-07"),
+        }
+        for key, (start, end) in official.items():
+            d = date.fromisoformat(start)
+            last = date.fromisoformat(end)
+            while d <= last:
+                spec = detect_festival(d)
+                self.assertIsNotNone(spec, f"{d} 应识别为 {key}")
+                self.assertEqual(spec.key, key, f"{d} 识别成了 {spec.key}")
+                d += timedelta(days=1)
+
+    def test_every_statutory_festival_has_asset(self):
+        """7 个法定节日都必须有背景图素材，且文件真实存在。"""
+        from festivals import list_statutory_festivals, FESTIVAL_ASSET_DIR
+        specs = list_statutory_festivals()
+        self.assertEqual(len(specs), 7)
+        for spec in specs:
+            path = FESTIVAL_ASSET_DIR / spec.bg_image
+            self.assertTrue(path.exists(),
+                            f"{spec.key} 的素材缺失：{path}")
+            self.assertGreater(path.stat().st_size, 10_000,
+                               f"{spec.key} 的素材异常小")
+
+    def test_hero_overlay_falls_back_when_image_blocked(self):
+        """🔴 邮件客户端默认屏蔽图片，文字必须仍可读。
+
+        hero_overlay 是半透明白渐变 —— 图片加载失败时
+        顶部渐变到近白，文字对比度依然足够。
+        """
+        from festivals import list_statutory_festivals
+        for spec in list_statutory_festivals():
+            overlay = spec.palette.hero_overlay
+            self.assertIn("linear-gradient", overlay,
+                          f"{spec.key} 缺渐变遮罩")
+            # 末段应接近不透明，确保文字可读
+            self.assertIn("0.9", overlay,
+                          f"{spec.key} 的遮罩末段不够不透明，"
+                          "图片被屏蔽时文字会看不清")
+
+
+class TestFestivalCareCopy(unittest.TestCase):
+    """节日文案与日常活动提示不应重复叠加。
+
+    真实 bug：节日模式下 `_care_line` 仍追加活动后缀，
+    导致「过年好 —— …顺手也把门店这边的好消息给你标出来了」这种
+    拖沓且信息重复的句子。
+    """
+
+    def _ctx(self, festival=None, campaign=3):
+        from mailer import CareContext
+        return CareContext(meal="dinner", hour=19, campaign_count=campaign,
+                           festival=festival)
+
+    def test_festival_mode_skips_campaign_suffix(self):
+        """🔴 节日模式不追加活动后缀。"""
+        from mailer import _care_line
+        from festivals import get_festival
+        fest = get_festival("春节")
+        _t, body = _care_line(self._ctx(festival=fest, campaign=5))
+        self.assertNotIn("顺手也把门店", body,
+                         "节日文案后不应再追加活动提示")
+
+    def test_normal_mode_keeps_campaign_suffix(self):
+        """日常模式仍应保留活动后缀 —— 不能为了修节日把日常也砍了。"""
+        from mailer import _care_line
+        _t, body = _care_line(self._ctx(festival=None, campaign=5))
+        self.assertIn("顺手也把门店", body)
+
+    def test_no_campaign_no_suffix_either_way(self):
+        """没有活动时两种模式都不该加。"""
+        from mailer import _care_line
+        from festivals import get_festival
+        _t1, b1 = _care_line(self._ctx(festival=None, campaign=0))
+        _t2, b2 = _care_line(self._ctx(festival=get_festival("春节"), campaign=0))
+        self.assertNotIn("顺手也把门店", b1)
+        self.assertNotIn("顺手也把门店", b2)
+
+    def test_festival_greeting_used_per_slot(self):
+        """各餐次应有不同的节日文案，不能四个档位说同一句。"""
+        from mailer import _care_core
+        from festivals import get_festival
+        fest = get_festival("spring_festival")
+        titles = set()
+        for meal in ("breakfast", "lunch", "tea", "dinner"):
+            ctx = self._ctx(festival=fest)
+            from dataclasses import replace
+            t, _b = _care_core(replace(ctx, meal=meal))
+            titles.add(t)
+        self.assertEqual(len(titles), 4,
+                         f"春节四档文案应各不相同，实际只有 {len(titles)} 种：{titles}")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

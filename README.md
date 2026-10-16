@@ -22,11 +22,11 @@
 [![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?style=flat-square&logo=python&logoColor=white)](#快速体验30秒)
 [![deps](https://img.shields.io/badge/dependencies-0-3FB950?style=flat-square)](#快速体验30秒)
 [![Token](https://img.shields.io/badge/Token-不需要-blue?style=flat-square)](#快速体验30秒)
-[![tests](https://img.shields.io/badge/tests-159%20passed-3FB950?style=flat-square)](tests/test_all.py)
+[![tests](https://img.shields.io/badge/tests-180%20passed-3FB950?style=flat-square)](tests/test_all.py)
 [![MCP](https://img.shields.io/badge/MCP-33%20tools%20官方-DA291C?style=flat-square)](https://mcp.mcd.cn)
 [![License](https://img.shields.io/badge/License-MIT-FFC72C?style=flat-square)](./LICENSE)
 
-**👉 [在线预览 6 封真实邮件（无需下载、无需 Token）](https://f-cfan.github.io/mcd-meal-radar/)**
+**👉 [在线预览 6 封真实邮件 + 7 大国家法定节假日主题邮件（无需下载、无需 Token）](https://f-cfan.github.io/mcd-meal-radar/)**
 
 手机点开就能看，不用 clone、不用装环境。
 本地跑也行：**`python demo.py`** — 零依赖 · 不用申请 Token · 不联网 · 30 秒看到同样这些效果
@@ -54,11 +54,11 @@ cd mcd-meal-radar
 python demo.py
 ```
 
-不需要 MCP Token，不装任何第三方库，也不联网 —— `fixtures/` 里存着 18 份
-**真实 MCP 响应录制**，跑通四条链路：午间推荐 / 券过期提醒 / Token 失效降级 / 单位陷阱。
+不需要 MCP Token，不装任何第三方库，也不联网 —— `fixtures/` 里存着 19 份
+**真实 MCP 响应录制**，跑通五条链路：午间推荐 / 券过期提醒 / Token 失效降级 / 单位陷阱 / 中国国家法定节假日主题。
 
 ```bash
-python tests/test_all.py     # 159 个单测
+python tests/test_all.py     # 180 个单测
 ```
 
 ---
@@ -76,6 +76,7 @@ python tests/test_all.py     # 159 个单测
 | 券过期 | 忘了就错过 | 20:00 专门提醒，还有 1 天/3 天两级预警 |
 | 自动领券 | 需要手动操作 | 每日 09:00 自动领取 |
 | 门店活动 | 不会主动告诉你 | 活动层随建议一起提示 |
+| 法定节假日 | 千篇一律的冷冰冰文本 | **自动识别 7 大国家法定节假日，切换专属新中式背景图与应景问候** |
 | Token 过期 | 跑完就结束，碰不到 | **会必然遇到 → 已设计降级链路** |
 
 最后一行是本项目最核心的工程判断，详见下文「为什么专门设计了 Token 降级」。
@@ -92,16 +93,17 @@ python demo.py
 
 **零第三方依赖 · 不需要 MCP Token · 不联网。**
 
-`fixtures/` 中存放 19 份响应样本（其中 7 份是 2026-10-15 真实调用录制，12 份是按官方文档结构整理的样本），`demo.py` 读取它们跑通四条链路：
+`fixtures/` 中存放 19 份响应样本（其中 7 份是 2026-10-15 真实调用录制，12 份是按官方文档结构整理的样本），`demo.py` 读取它们跑通五条链路：
 
 ```
 链路 A  午间推荐      → 四层约束求解，输出可解释建议
 链路 B  Token 失效    → 优雅降级，生成续授权邮件
 链路 C  券过期提醒    → 20:00 档位的实际效果
 链路 D  单位陷阱      → 演示最容易踩且后果最严重的坑
+链路 E  法定节假日    → 7 大中国国家法定节假日专属风格与背景素材库
 ```
 
-跑完后用浏览器打开 `out/demo_digest.html`，看到的就是真实推送的邮件效果。
+跑完后用浏览器打开 `out/demo_digest.html` 与 `out/demo_festival_spring.html`，看到的就是真实推送的邮件效果。
 
 也可以直接看已入库的两份样例（无需运行）：
 
@@ -111,7 +113,7 @@ python demo.py
 | Token 失效邮件 | [`docs/samples/sample-email-token-expired.html`](docs/samples/sample-email-token-expired.html) |
 
 ```bash
-# 跑单测（159 个，覆盖单位换算 / 场景矩阵 / 字段缺失 / 双通道 / 画像推导 / 文档一致性）
+# 跑单测（180 个，覆盖单位换算 / 场景矩阵 / 字段缺失 / 双通道 / 画像推导 / 法定节假日 / 文档一致性）
 python tests/test_all.py
 ```
 
@@ -204,7 +206,7 @@ python tests/test_all.py
 | 真实营养 | ✅ **158 项**标准单品营养 |
 | 真实活动 | ✅ **16 个**进行中/未来活动 |
 | 真实积分 | ✅ `availablePoint` 读取成功 |
-| 单测 | **159 passed** |
+| 单测 | **180 passed** |
 
 **推荐结果为真实数据**：
 
@@ -491,16 +493,19 @@ python scheduler.py --install-cron
 ```
 mcd-meal-radar/
 ├── demo.py                  # 30 秒演示入口，零依赖零 Token
-├── scheduler.py             # 四档定时任务调度器
+├── scheduler.py             # 四档定时任务调度器（支持 --festival 节日主题）
 ├── src/
 │   ├── mcd_adapter.py       # MCP 协议 ↔ 领域模型，含单位换算与场景矩阵
 │   ├── collector.py         # 数据抓取编排（live / fixture 双源同出口）
-│   ├── solver.py            # 四层约束求解引擎
-│   ├── mailer.py            # 邮件渲染（HTML + 纯文本）
+│   ├── solver.py            # 四层约束求解引擎（含法定节假日应景加权）
+│   ├── festivals.py         # 中国 7 大国家法定节假日日历引擎与素材库加载
+│   ├── mailer.py            # 邮件渲染（HTML + 纯文本 + 节日背景渲染）
 │   └── mail.py              # 双通道推送（Agent Mail 优先 / SMTP 备选）
 ├── fixtures/                # 19 份响应样本（7 份真实调用录制 + 12 份文档结构样本）
-├── tests/test_all.py        # 159 个单测
-├── assets/                  # Banner、架构图
+├── tests/test_all.py        # 180 个单测
+├── assets/
+│   ├── festivals/           # 7 大中国国家法定节假日专属插画背景素材库与 manifest.json
+│   └── shots/               # 邮件渲染首屏预览图
 ├── docs/                    # 部署与提交清单
 ├── MCP_INTEGRATION.md       # MCP 集成说明与实测踩坑记录
 ├── CONTEST_DECLARATION.md   # 参赛声明（官方原文，逐字未改）

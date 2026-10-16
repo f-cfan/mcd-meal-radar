@@ -1,0 +1,293 @@
+{
+  "version": 1,
+  "description": "中国国家法定节假日视觉素材库与内容风格配置（元旦、春节、清明、劳动节、端午、中秋、国庆）",
+  "festivals": {
+    "new_year": {
+      "name": "元旦",
+      "badge": "🌅 元旦假期 · 新年伊始",
+      "statutory_note": "国家法定节假日（1月1日）",
+      "bg_image": "new_year.png",
+      "palette": {
+        "page_bg": "#FAF5EF",
+        "card_bg": "#FFFFFF",
+        "accent": "#C0392B",
+        "care_bg": "#FDF5F0",
+        "care_border": "#C0392B",
+        "care_ink": "#782016",
+        "badge_bg": "rgba(192, 57, 43, 0.90)",
+        "badge_ink": "#FFFFFF",
+        "hero_overlay": "linear-gradient(180deg, rgba(45, 18, 12, 0.18) 0%, rgba(255, 255, 255, 0.94) 100%)"
+      },
+      "greeting_headline": "新年第一天 —— 翻开新日历，先用一顿热乎饭开个好头。",
+      "greeting_body": "过去一年的奔波先放下，今天不用赶时间，吃饱了再迎新气象。",
+      "slot_greetings": {
+        "breakfast": [
+          "新年早安",
+          "新年的第一缕阳光到了 —— 先给自己一份热乎早餐，今年顺顺利利。"
+        ],
+        "lunch": [
+          "元旦的午后",
+          "新年第一顿正餐别将就，挑份扎实的，把新一年的力气蓄满。"
+        ],
+        "tea": [
+          "元旦小憩",
+          "假期下午慢慢过，来点热饮小食暖暖手。"
+        ],
+        "dinner": [
+          "元旦的夜晚",
+          "新年第一天快收尾了，吃顿热乎省心的，舒舒服服开启这一年。"
+        ]
+      },
+      "boost_tags": ["人气经典", "多件套", "小食"],
+      "boost_keywords": ["四件套", "三件套", "金拱门", "桶"],
+      "boost_score": 8,
+      "boost_reason": "元旦应景：新年伊始，优先为你挑了满足感强的经典热食组合"
+    },
+    "spring_festival": {
+      "name": "春节",
+      "badge": "🏮 新春佳节 · 阖家安康",
+      "statutory_note": "国家法定节假日（农历除夕至正月初三）",
+      "bg_image": "spring_festival.png",
+      "palette": {
+        "page_bg": "#FAF2EA",
+        "card_bg": "#FFFDF9",
+        "accent": "#B83B2A",
+        "care_bg": "#FDF3EE",
+        "care_border": "#B83B2A",
+        "care_ink": "#6E1E14",
+        "badge_bg": "rgba(184, 59, 42, 0.92)",
+        "badge_ink": "#FFF8EA",
+        "hero_overlay": "linear-gradient(180deg, rgba(40, 10, 8, 0.22) 0%, rgba(255, 253, 249, 0.95) 100%)"
+      },
+      "greeting_headline": "过年好 —— 忙了一整年，这几天无论在哪都要吃顿好的。",
+      "greeting_body": "大鱼大肉吃腻了或是守岁路上想换个口味，热乎的随时给你备着。",
+      "slot_greetings": {
+        "breakfast": [
+          "新春早安",
+          "过年睡个懒觉刚刚好 —— 起来吃份热乎早餐，岁岁常欢愉。"
+        ],
+        "lunch": [
+          "新春的晌午",
+          "拜年串门或是宅家休息，换换口味来份省心套餐，热热闹闹过好年。"
+        ],
+        "tea": [
+          "新春午后",
+          "走亲访友歇歇脚，来点小食甜品垫垫肚子。"
+        ],
+        "dinner": [
+          "灯火良宵",
+          "年味正浓的晚上，不管是一人独处还是家人围坐，吃口热乎的最踏实。"
+        ]
+      },
+      "boost_tags": ["人气经典", "小食", "甜品"],
+      "boost_keywords": ["四件套", "桶", "金拱门", "鸡翅", "麦乐鸡"],
+      "boost_score": 10,
+      "boost_reason": "新春应景：佳节欢聚，优先挑了分量扎实、适合分享的丰盛组合"
+    },
+    "qingming": {
+      "name": "清明节",
+      "badge": "🌿 清明踏青 · 春和景明",
+      "statutory_note": "国家法定节假日（农历清明当日）",
+      "bg_image": "qingming.png",
+      "palette": {
+        "page_bg": "#F2F7F4",
+        "card_bg": "#FFFFFF",
+        "accent": "#2E6F5E",
+        "care_bg": "#EBF5F0",
+        "care_border": "#2E6F5E",
+        "care_ink": "#1B463B",
+        "badge_bg": "rgba(46, 111, 94, 0.90)",
+        "badge_ink": "#FFFFFF",
+        "hero_overlay": "linear-gradient(180deg, rgba(18, 45, 38, 0.16) 0%, rgba(255, 255, 255, 0.94) 100%)"
+      },
+      "greeting_headline": "春和景明 —— 出门踏青或是居家歇息，记得按时吃饭。",
+      "greeting_body": "春风吹得人容易犯懒，挑份清爽省心的餐食，给身体轻装充个电。",
+      "slot_greetings": {
+        "breakfast": [
+          "春晨早安",
+          "清明前后的早晨微凉，先喝口热的、吃顿早饭再出门踏青。"
+        ],
+        "lunch": [
+          "踏青午间",
+          "春日正午，在外面走累了或是宅在家里，来份省心午餐补补体力。"
+        ],
+        "tea": [
+          "春日午后",
+          "柳绿风轻的下午，喝杯饮品歇口气，把脚步放慢一点。"
+        ],
+        "dinner": [
+          "春夜安宁",
+          "踏青归来有些疲惫吧 —— 晚饭挑份温和轻负担的，吃完早点休息。"
+        ]
+      },
+      "boost_tags": ["冷饮", "小食"],
+      "boost_keywords": ["三件套", "无糖", "鸡肉", "麦香鸡"],
+      "boost_score": 8,
+      "boost_reason": "清明应景：春日踏青时节，优先挑了轻便省心的便携餐品"
+    },
+    "labor_day": {
+      "name": "劳动节",
+      "badge": "🌾 五一假期 · 致敬耕耘",
+      "statutory_note": "国家法定节假日（5月1日至2日）",
+      "bg_image": "labor_day.png",
+      "palette": {
+        "page_bg": "#FAF6EE",
+        "card_bg": "#FFFFFF",
+        "accent": "#B86B14",
+        "care_bg": "#FDF7E9",
+        "care_border": "#B86B14",
+        "care_ink": "#6E3D07",
+        "badge_bg": "rgba(184, 107, 20, 0.90)",
+        "badge_ink": "#FFFFFF",
+        "hero_overlay": "linear-gradient(180deg, rgba(48, 28, 6, 0.18) 0%, rgba(255, 255, 255, 0.94) 100%)"
+      },
+      "greeting_headline": "五一快乐 —— 平时连轴转辛苦了，这个假期只管好好休息。",
+      "greeting_body": "把工作群暂时静音，今天最大的正经事就是睡饱觉、吃顿喜欢的。",
+      "slot_greetings": {
+        "breakfast": [
+          "假期早安",
+          "不用被闹钟催醒的早晨真好 —— 慢悠悠吃顿早饭，享受属于你的假期。"
+        ],
+        "lunch": [
+          "五一午间",
+          "平时工作日忙着对付一口，今天放假了，挑份真正想吃的犒劳自己。"
+        ],
+        "tea": [
+          "假日下午茶",
+          "初夏的阳光正好，来份冰饮和小食，把紧绷的神经松一松。"
+        ],
+        "dinner": [
+          "五一晚间",
+          "辛苦打拼的你值得被好好照顾 —— 今晚不聊工作，安心吃顿满足的。"
+        ]
+      },
+      "boost_tags": ["人气经典", "小食", "冷饮"],
+      "boost_keywords": ["四件套", "三件套", "麦辣", "虾堡"],
+      "boost_score": 8,
+      "boost_reason": "五一应景：假期犒劳自己，优先挑了口碑经典的饱腹套餐"
+    },
+    "dragon_boat": {
+      "name": "端午节",
+      "badge": "🎋 端午安康 · 仲夏清风",
+      "statutory_note": "国家法定节假日（农历五月初五）",
+      "bg_image": "dragon_boat.png",
+      "palette": {
+        "page_bg": "#F1F7F4",
+        "card_bg": "#FFFFFF",
+        "accent": "#166953",
+        "care_bg": "#E7F4EF",
+        "care_border": "#166953",
+        "care_ink": "#0E4234",
+        "badge_bg": "rgba(22, 105, 83, 0.90)",
+        "badge_ink": "#FFFFFF",
+        "hero_overlay": "linear-gradient(180deg, rgba(10, 42, 32, 0.18) 0%, rgba(255, 255, 255, 0.94) 100%)"
+      },
+      "greeting_headline": "端午安康 —— 粽子不论咸甜，今天都愿你顺遂舒心。",
+      "greeting_body": "仲夏天气渐热，要是糯米吃多了想换换胃口，来点清爽的搭一搭。",
+      "slot_greetings": {
+        "breakfast": [
+          "端午早安",
+          "门挂艾草、夏风清朗 —— 早上吃点热乎好消化的，祝你端午安康。"
+        ],
+        "lunch": [
+          "端午午间",
+          "仲夏中午容易犯困，粽子之外换个口味，配杯冰饮解解暑气。"
+        ],
+        "tea": [
+          "仲夏午后",
+          "天气热起来了，下午来杯清凉饮品配点小食，解腻又提神。"
+        ],
+        "dinner": [
+          "端午晚风",
+          "夏夜微风吹散燥热，晚饭别吃太撑，挑份合适的套餐舒坦收尾。"
+        ]
+      },
+      "boost_tags": ["冷饮", "小食", "甜品"],
+      "boost_keywords": ["可乐", "雪碧", "三件套", "虾堡"],
+      "boost_score": 8,
+      "boost_reason": "端午应景：仲夏时节解腻消暑，优先挑了带饮品的清爽组合"
+    },
+    "mid_autumn": {
+      "name": "中秋节",
+      "badge": "🌕 中秋佳节 · 月圆人安",
+      "statutory_note": "国家法定节假日（农历八月十五）",
+      "bg_image": "mid_autumn.png",
+      "palette": {
+        "page_bg": "#FAF5EC",
+        "card_bg": "#FFFDF9",
+        "accent": "#B56A12",
+        "care_bg": "#FDF5E6",
+        "care_border": "#B56A12",
+        "care_ink": "#6B3C06",
+        "badge_bg": "rgba(181, 106, 18, 0.92)",
+        "badge_ink": "#FFFDF7",
+        "hero_overlay": "linear-gradient(180deg, rgba(28, 22, 42, 0.25) 0%, rgba(255, 253, 249, 0.95) 100%)"
+      },
+      "greeting_headline": "中秋快乐 —— 月亮慢慢变圆，愿你身边有人惦记，碗里有热饭。",
+      "greeting_body": "不管今晚是在家团圆还是独自在异乡打拼，先把肚子喂饱，抬头就是同一轮好月色。",
+      "slot_greetings": {
+        "breakfast": [
+          "中秋早安",
+          "秋意渐浓的早晨，桂花香快飘过来了 —— 先吃份热乎早饭暖暖身。"
+        ],
+        "lunch": [
+          "中秋午间",
+          "佳节正午，还在路上奔波或是准备过节，先吃顿扎实午饭垫好底。"
+        ],
+        "tea": [
+          "秋日午后",
+          "月饼甜腻，下午来点咸香小食和清爽饮品中和一下刚刚好。"
+        ],
+        "dinner": [
+          "月圆之夜",
+          "今晚月色很好 —— 不管几个人吃饭，点份热乎喜欢的，就是圆满的一餐。"
+        ]
+      },
+      "boost_tags": ["人气经典", "多件套", "小食"],
+      "boost_keywords": ["四件套", "三件套", "桶", "鸡翅"],
+      "boost_score": 9,
+      "boost_reason": "中秋应景：月圆佳节，优先挑了温润饱腹、咸香解腻的团圆组合"
+    },
+    "national_day": {
+      "name": "国庆节",
+      "badge": "🍁 十一黄金周 · 金秋欢聚",
+      "statutory_note": "国家法定节假日（10月1日至3日）",
+      "bg_image": "national_day.png",
+      "palette": {
+        "page_bg": "#FAF3EE",
+        "card_bg": "#FFFFFF",
+        "accent": "#B83227",
+        "care_bg": "#FDF2EE",
+        "care_border": "#B83227",
+        "care_ink": "#6E1A13",
+        "badge_bg": "rgba(184, 50, 39, 0.92)",
+        "badge_ink": "#FFFFFF",
+        "hero_overlay": "linear-gradient(180deg, rgba(42, 12, 10, 0.20) 0%, rgba(255, 255, 255, 0.95) 100%)"
+      },
+      "greeting_headline": "国庆长假快乐 —— 金秋十月，无论在旅途还是在家，都要好好吃饭。",
+      "greeting_body": "难得的长假不用看表赶路，随时随地来份热乎省心的，给金秋假期加满能量。",
+      "slot_greetings": {
+        "breakfast": [
+          "长假早安",
+          "金秋十月天高气爽，出门游玩前先吃顿热乎早餐，元气满满出发。"
+        ],
+        "lunch": [
+          "黄金周午间",
+          "景区排队太久或是宅家不想开火，下面这套省心高性价比午餐随时待命。"
+        ],
+        "tea": [
+          "金秋午后",
+          "秋高气爽的下午，逛累了就找个地方坐坐，来份小食饮品充充电。"
+        ],
+        "dinner": [
+          "长假夜晚",
+          "玩了一整天挺充实吧 —— 晚饭挑份丰盛的四件套，舒舒服服享受假期夜色。"
+        ]
+      },
+      "boost_tags": ["人气经典", "多件套", "小食"],
+      "boost_keywords": ["四件套", "三件套", "桶", "金拱门"],
+      "boost_score": 9,
+      "boost_reason": "国庆应景：黄金周长假出行与欢聚，优先挑了省心管饱的多件套组合"
+    }
+  }
+}

@@ -1014,8 +1014,7 @@ def nutrition_from_combo(
         for f in fields:
             v = getattr(nutrition, f, None)
             if v is None:
-                # 官方数据本身缺这个字段 —— 标为 None，不当 0，也不参与累加
-                acc[f] = None
+                # 官方数据本身缺这个字段 —— 不当 0，也不抹掉其他子项已累加的值
                 continue
             cur = acc[f]
             acc[f] = v * qty if cur is None else cur + v * qty

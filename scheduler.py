@@ -32,6 +32,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src
 from collector import (  # noqa: E402
     get_snapshot, plan_quotes, quote_candidates, enrich_combo_nutrition,
 )
+from festivals import (  # noqa: E402
+    DEFAULT_PUBLIC_ASSET_BASE, FestivalSpec, detect_festival,
+)
 from mcd_adapter import (  # noqa: E402
     McdMcpClient,
     build_taste_profile_from_orders,
@@ -130,7 +133,12 @@ def _window_passed(window: str, minutes: int) -> bool:
     return minutes > end
 
 
-def build_care_context(snapshot, slot, now=None) -> CareContext:
+def build_care_context(
+    snapshot,
+    slot,
+    now=None,
+    festival: FestivalSpec | None = None,
+) -> CareContext:
     """从真实数据构造关怀上下文。
 
     **只传有依据的信号** —— 例如「漏餐」必须在历史订单里真的缺失该餐次，
@@ -139,6 +147,7 @@ def build_care_context(snapshot, slot, now=None) -> CareContext:
     """
     now = now or datetime.now(CST)
     meal = current_meal_window(now.hour)
+    fest = festival if festival is not None else detect_festival(now)
 
     coupons = snapshot.store_coupons or snapshot.my_coupons
     # 分两档统计：今天就到期（更紧迫）与 3 天内到期。
@@ -149,23 +158,8 @@ def build_care_context(snapshot, slot, now=None) -> CareContext:
                      if c.expires_in_days is not None and 0 < c.expires_in_days <= 3]
 
     # 漏餐判定：仅当有历史订单时才算，否则视为「未知」而非「漏了」
-    #
-    # ⚠️ 早期版本这里是 `skipped = 0 if ordered_today else 1`，
-    # 而 mailer 的触发条件是 `skipped_meals >= 2` —— 于是这个值最大只能是 1，
-    # 导致 README 主打的那句「今天还没顾上吃饭」在真实运行中**永远不会被触发**。
-    #
-    # 现在改为**统计当天已经错过的餐次数量**，语义也和字段名一致：
-    #   · 用真实历史订单判定当天有没有下单（无历史订单 → 0，不猜）
-    #   · 已过时段数 - 已下单次数 = 错过的餐次
-    # 这样「晚餐档发现一天没吃」会得到 skipped=3（早/午/晚都过了），
-    # 自然满足 >=2 的触发条件。
     skipped = 0
     if snapshot.orders:
-        # ⚠️ 早期版本用 `orderId.endswith("20261016")` 判「今天是否下单」，
-        # 但真实订单号（ORD-20261016-123 / ORD-20261016123 / 带前缀哈希）
-        # **都不以日期结尾**，这个条件恒为假 —— 于是「今天已下单」永远识别不到，
-        # 漏餐判定在有订单的情况下也会误报。
-        # 改为「日期出现在 ID 中」或「createdAt 以今天开头」，两种格式都覆盖。
         stamp = now.strftime("%Y%m%d")
         dash = now.strftime("%Y-%m-%d")
         ordered_today = [
@@ -176,7 +170,6 @@ def build_care_context(snapshot, slot, now=None) -> CareContext:
             or str(o.get("orderTime", "") or "").startswith(dash)
         ]
         if not ordered_today:
-            # 已过去的餐次时段数（早餐/午餐/下午茶/晚餐/夜市，凌晨不计入）
             passed_windows = sum(
                 1 for name in ("breakfast", "lunch", "tea", "dinner")
                 if _window_passed(name, now.hour * 60 + now.minute)
@@ -191,6 +184,7 @@ def build_care_context(snapshot, slot, now=None) -> CareContext:
         campaign_count=len(snapshot.campaign_names),
         skipped_meals=skipped,
         is_weekend=now.weekday() >= 5,
+        festival=fest,
     )
 
 
@@ -208,22 +202,24 @@ def run_slot(
     do_send: bool = False,
     outdir: str = "out",
     now: datetime | None = None,
+    festival_override: str | None = None,
+    asset_base_url: str | None = None,
 ) -> dict:
     """执行一个档位任务。返回执行摘要。
 
     **核心纪律**：无论何种模式，本函数都不调用任何下单类工具。
     推荐归推荐，下单权始终在人。
 
-    `now` 默认为真实当前时间；它的**日期部分**用于计算漏餐等信号，
+    `now` 默认为真实当前时间；它的**日期部分**用于计算漏餐与法定节假日信号，
     而**时间部分由 slot.hour/minute 决定**（见下方说明），
     这样 `--all` 预览时每档呈现各自的时段特征。
     """
     import os
     os.makedirs(outdir, exist_ok=True)
     now = now or datetime.now(CST)
+    fest = detect_festival(now, override_key=festival_override)
 
-    # 1) 抓数据（外送场景的 address_id 由 collector 按 MCD_ADDRESS_ID /
-    #    MCD_ADDRESS_PICK 解析，见 _pick_address 的注释）
+    # 1) 抓数据
     snap = get_snapshot(mode=mode, scene="delivery", auto_claim=slot.auto_claim)
 
     token_dead = mode == "live" and snap.degraded and "Token" in (snap.degrade_reason or "")
@@ -232,24 +228,9 @@ def run_slot(
     if token_dead:
         decision: Decision = Decision(None, [], ["实时数据"], ["Token 失效"])
     else:
-        # 画像只解析一次，既用于求解也用于渲染摘要（早期版本重复调用两次）
         profile = resolve_profile(snap)
         policy = load_policy()
 
-        # ① 零成本预筛：先决定「问哪些组合的价」，不发请求。
-        #    早期版本是「先核价再筛选」，导致邮件里 59/77 显示未核价 ——
-        #    那是没做完，不是诚实。
-        # ── 本档位的时间基准 ─────────────────────────────────────
-        # ⚠️ **必须用 slot 的绑定时刻，不能用真实时钟**。
-        # 早期版本两处都调 datetime.now()，于是：
-        #   · 13:40 跑 `--all` 时，早间档（09:00）也算成lunch，
-        #     早餐品被全部过滤，关怀语也说「到饭点啦」
-        #   · 四个档位生成出**完全相同**的文案与菜单
-        # 也就是说 `--all` 预览功能基本失效 —— 而它恰恰是
-        # 评审和陌生人了解项目的主要入口。
-        #
-        # 真实定时运行时 slot.hour 与当下时间一致（cron 按点触发），
-        # 所以这个改动对生产无影响，只修正了「手动跑/预览」的语义。
         slot_dt = datetime(now.year, now.month, now.day,
                            slot.hour, slot.minute, tzinfo=CST)
         meal_now = current_meal_window(slot.hour)
@@ -267,10 +248,6 @@ def run_slot(
                     be_code=snap.store.be_code,
                 )
 
-                # ③ 套餐营养补齐：官方 list-nutrition-foods 只覆盖标准单品，
-                #    菜单以套餐为主 —— 直接匹配命中率仅约 22%。
-                #    用 query-meal-detail 拿套餐子项再联表相加，
-                #    全部来自官方数据，不含任何估算。
                 enriched, sodium_swaps = enrich_combo_nutrition(
                     client, snap, snap.store.store_code, combos,
                     be_code=snap.store.be_code, be_type=2)
@@ -282,7 +259,8 @@ def run_slot(
                           f"（{'、'.join(m.name for m in snap.menu if m.code in enriched)}）")
 
         # ② 求解（纯本地计算，不发请求）
-        decision = solve(snap, profile, policy, price_table, breakdowns, meal=meal_now)
+        decision = solve(snap, profile, policy, price_table, breakdowns,
+                         meal=meal_now, festival=fest)
         profile_text = profile_summary(profile, snap.menu)
 
     # 3) 渲染
@@ -291,13 +269,20 @@ def run_slot(
         html = render_token_expired("", snap.degrade_reason or "Token 失效")
         text = "MCP Token 已失效，请到 open.mcd.cn/mcp 重新获取并更新 MCD_MCP_TOKEN。"
     else:
-        subject = f"【麦麦饭点雷达】{slot.label}建议 · {slot_dt:%m-%d}"
-        care = build_care_context(snap, slot, now=slot_dt)
-        html = render_digest(decision, snap, profile_text, slot.label, care=care)
-        text = render_plain(decision, snap, slot.label, care=care)
+        if fest is not None:
+            subject = f"【麦麦饭点雷达 · {fest.name}特辑】{slot.label}建议 · {slot_dt:%m-%d}"
+        else:
+            subject = f"【麦麦饭点雷达】{slot.label}建议 · {slot_dt:%m-%d}"
+        care = build_care_context(snap, slot, now=slot_dt, festival=fest)
+        effective_asset_base = asset_base_url
+        if effective_asset_base is None and do_send:
+            effective_asset_base = os.environ.get("MCD_ASSET_BASE_URL") or DEFAULT_PUBLIC_ASSET_BASE
+        html = render_digest(decision, snap, profile_text, slot.label,
+                             care=care, festival=fest, asset_base_url=effective_asset_base)
+        text = render_plain(decision, snap, slot.label, care=care, festival=fest)
 
         # 记录本轮首选，供下一档做口味轮换（避免天天复读同一份）
-        if decision.best and decision.best.items:
+        if mode == "live" and decision.best and decision.best.items:
             try:
                 record_push(decision.best.items[0].code)
             except Exception:
@@ -313,6 +298,8 @@ def run_slot(
 
     result = {
         "slot": slot.key, "label": slot.label, "mode": mode,
+        "festival": fest.key if fest else None,
+        "festival_name": fest.name if fest else None,
         "degraded": snap.degraded, "degrade_reason": snap.degrade_reason,
         "html_path": html_path, "text_path": os.path.join(outdir, f"{safe}.txt"),
         "menu_items": len(snap.menu), "has_decision": decision.best is not None,
@@ -358,6 +345,7 @@ def main() -> int:
                     help="走本地 fixtures（默认行为，显式写出更清晰）")
     ap.add_argument("--now", choices=[s.key for s in SLOTS], help="指定档位")
     ap.add_argument("--all", action="store_true", help="离线跑全部四档")
+    ap.add_argument("--festival", help="指定中国国家法定节假日主题（如 spring_festival/mid_autumn 或 春节/中秋）")
     ap.add_argument("--send", action="store_true", help="实际发送邮件（默认仅落盘）")
     ap.add_argument("--install-cron", action="store_true", help="打印 crontab 示例")
     args = ap.parse_args()
@@ -375,14 +363,18 @@ def main() -> int:
     else:
         targets = [s for s in SLOTS if s.key == args.now]
 
+    fest_preview = detect_festival(override_key=args.festival)
     print(f"模式：{mode}（{'需 MCD_MCP_TOKEN' if mode == 'live' else '离线 fixtures，无需 Token'}）")
+    if fest_preview:
+        print(f"节日：{fest_preview.badge}（背景素材：assets/festivals/{fest_preview.bg_image}）")
     print(f"推送：{describe_channels()}")
     print("-" * 62)
 
     failures = 0
     for slot in targets:
         try:
-            res = run_slot(slot, mode=mode, do_send=args.send)
+            res = run_slot(slot, mode=mode, do_send=args.send,
+                           festival_override=args.festival)
         except MCPError as exc:
             print(f"[{slot.label}] MCP 异常：{exc}")
             failures += 1

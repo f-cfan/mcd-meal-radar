@@ -25,18 +25,13 @@ import scheduler as sched  # noqa: E402
 
 
 def main() -> int:
-    # 固定一个日期，确保离线渲染可复现（fixtures 里的数据日期）
+    from festivals import list_statutory_festivals
+
+    # 固定一个非节假日基准日期，确保四档日常关怀邮件可复现
     base = datetime(2026, 10, 16, tzinfo=sched.CST)
 
     for slot in sched.SLOTS:
-        # 关键：now 传 None → run_slot 内部用 slot.hour 算时段，
-        # 而漏餐等信号只依赖日期部分，与真实运行一致。
-        try:
-            res = sched.run_slot(slot, mode="fixture", outdir="out/preview")
-        except TypeError:
-            res = sched.run_slot(slot, mode="fixture", outdir="out/preview",
-                                 now=base)
-        # 重命名到 care-<key>.html，与 build_preview 的清单对应
+        res = sched.run_slot(slot, mode="fixture", outdir="out/preview", now=base)
         src = Path("out/preview") / f"{slot.key}.html"
         dst = Path("out/preview") / f"care-{slot.key}.html"
         if src.exists():
@@ -45,6 +40,26 @@ def main() -> int:
             src.rename(dst)
         print(f"  {'✅' if dst.exists() else '❌'} care-{slot.key}.html"
               f"（{slot.label}）")
+
+    # 生成 7 大中国国家法定节假日主题邮件预览
+    lunch_slot = next(s for s in sched.SLOTS if s.key == "lunch")
+    for fest in list_statutory_festivals():
+        sched.run_slot(
+            lunch_slot,
+            mode="fixture",
+            outdir="out/preview",
+            now=base,
+            festival_override=fest.key,
+            asset_base_url="assets/festivals",
+        )
+        src = Path("out/preview") / f"{lunch_slot.key}.html"
+        dst = Path("out/preview") / f"festival-{fest.key}.html"
+        if src.exists():
+            if dst.exists():
+                dst.unlink()
+            src.rename(dst)
+        print(f"  {'✅' if dst.exists() else '❌'} festival-{fest.key}.html"
+              f"（{fest.name} · {fest.badge}）")
     return 0
 
 

@@ -54,6 +54,17 @@ PAGES = [
      "20:00 档：过期提醒 + 晚餐建议"),
 ]
 
+# 7 大中国国家法定节假日主题预览
+FESTIVAL_PAGES = [
+    ("festival-new_year.html", "🌅 元旦特辑", "国家法定节假日（1月1日）· 旭日新章主题背景与新年问候"),
+    ("festival-spring_festival.html", "🏮 春节特辑", "国家法定节假日（除夕至初三）· 新春灯笼主题背景与欢聚加权"),
+    ("festival-qingming.html", "🌿 清明节特辑", "国家法定节假日（清明当日）· 春和景明水墨背景与踏青关怀"),
+    ("festival-labor_day.html", "🌾 劳动节特辑", "国家法定节假日（5月1日~2日）· 麦浪初夏背景与假期犒劳"),
+    ("festival-dragon_boat.html", "🎋 端午节特辑", "国家法定节假日（农历五月初五）· 竹青艾草背景与仲夏解腻推荐"),
+    ("festival-mid_autumn.html", "🌕 中秋节特辑", "国家法定节假日（农历八月十五）· 金桂圆月背景与团圆夜问候"),
+    ("festival-national_day.html", "🍁 国庆节特辑", "国家法定节假日（10月1日~3日）· 金秋红叶背景与黄金周出行补给"),
+]
+
 INDEX_CSS = """
 :root {
   --ink: #1f1f1e; --muted: #6b6a66; --line: #e5e3de;
@@ -70,6 +81,7 @@ body {
 .wrap { max-width: 1000px; margin: 0 auto; }
 header { margin-bottom: 28px; }
 h1 { font-size: 26px; font-weight: 700; margin: 0 0 8px; }
+.sec-title { font-size: 19px; font-weight: 700; margin: 34px 0 12px; }
 .sub { color: var(--muted); font-size: 14px; }
 .badges { margin-top: 14px; display: flex; gap: 8px; flex-wrap: wrap; }
 .badge {
@@ -120,16 +132,29 @@ def build_sources() -> None:
     print("▸ 生成邮件产物…")
     if not run("demo.py"):
         print("  ⚠️ demo.py 未成功，用已有的 out/*.html")
-    # 四档关怀邮件：与线上调度走同一套代码，保证预览=真实效果
+    # 四档关怀邮件 + 7 大国家法定节假日邮件：与线上调度走同一套代码，保证预览=真实效果
     if not run("scripts/build_care_previews.py"):
         print("  ⚠️ care 预览未成功")
+
+
+def copy_festival_assets() -> None:
+    """把 assets/festivals/ 素材库同步到 out/preview/assets/festivals/，供 Pages 与本地截图加载。"""
+    src_dir = ROOT / "assets" / "festivals"
+    if not src_dir.exists():
+        return
+    dst_dir = OUT / "assets" / "festivals"
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    for item in src_dir.iterdir():
+        if item.is_file():
+            (dst_dir / item.name).write_bytes(item.read_bytes())
 
 
 def collect() -> list[tuple[str, str, str]]:
     """把产物收集到 out/preview/，返回实际存在的页面列表。"""
     OUT.mkdir(parents=True, exist_ok=True)
+    copy_festival_assets()
     found: list[tuple[str, str, str]] = []
-    for fname, title, desc in PAGES:
+    for fname, title, desc in PAGES + FESTIVAL_PAGES:
         # 源文件可能直接在 out/ 也可能在 out/preview/
         for cand in (OUT / fname, ROOT / "out" / fname):
             if cand.exists():
@@ -143,6 +168,10 @@ def collect() -> list[tuple[str, str, str]]:
 
 def write_index(pages: list[tuple[str, str, str]]) -> None:
     """生成预览首页。"""
+    daily_keys = {k for k, _, _ in PAGES}
+    daily_pages = [p for p in pages if p[0] in daily_keys]
+    fest_pages = [p for p in pages if p[0] not in daily_keys]
+
     cards = "\n".join(
         f"""      <div class="card">
         <h2>{html_mod.escape(title)}</h2>
@@ -151,8 +180,27 @@ def write_index(pages: list[tuple[str, str, str]]) -> None:
           <a href="{html_mod.escape(fname)}" target="_blank" rel="noopener">打开邮件</a>
         </div>
       </div>"""
-        for fname, title, desc in pages
+        for fname, title, desc in daily_pages
     )
+    fest_cards = "\n".join(
+        f"""      <div class="card">
+        <h2>{html_mod.escape(title)}</h2>
+        <p>{html_mod.escape(desc)}</p>
+        <div class="links">
+          <a href="{html_mod.escape(fname)}" target="_blank" rel="noopener">预览节日邮件</a>
+        </div>
+      </div>"""
+        for fname, title, desc in fest_pages
+    )
+    fest_section = f"""
+  <h2 class="sec-title">中国国家法定节假日限定主题（7 大法定假日素材库）</h2>
+  <div class="sub" style="margin-bottom:14px">
+    命中元旦、春节、清明、劳动节、端午、中秋、国庆时，自动切换节日专属关怀文案、色板与 <code>assets/festivals/</code> 插画背景
+  </div>
+  <div class="grid">
+{fest_cards}
+  </div>""" if fest_cards else ""
+
     (OUT / "index.html").write_text(f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -172,6 +220,7 @@ def write_index(pages: list[tuple[str, str, str]]) -> None:
       <span class="badge">不代下单</span>
       <span class="badge">不接触支付</span>
       <span class="badge">金额只来自 calculate-price</span>
+      <span class="badge">7 大国家法定节假日主题</span>
     </div>
   </header>
 
@@ -184,6 +233,7 @@ def write_index(pages: list[tuple[str, str, str]]) -> None:
   <div class="grid">
 {cards}
   </div>
+{fest_section}
 
   <footer>
     <a href="https://github.com/f-cfan/mcd-meal-radar">查看源码与实测踩坑记录 →</a>

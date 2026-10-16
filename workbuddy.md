@@ -291,10 +291,10 @@ cands = apply_nutrition(cands, ...)
 
 | # | 做法 | 本项目实现 |
 |---|---|---|
-| 1 | `demo.py` 零依赖零 Token 30 秒跑通 | 4 条链路，18 份 fixtures |
+| 1 | `demo.py` 零依赖零 Token 30 秒跑通 | 5 条链路，19 份 fixtures |
 | 2 | 12+ 个真实响应录制 | `fixtures/` 共 19 份，含字段缺失与边界场景 |
 | 3 | 披露 MCP 真实踩坑 | `MCP_INTEGRATION.md` 记录 10 个坑 |
-| 4 | SVG Banner + 架构图 | `assets/banner.svg`、`assets/architecture.svg` |
+| 4 | SVG Banner + 架构图 + 节日素材库 | `assets/banner.svg`、`assets/architecture.svg`、`assets/festivals/` |
 | 5 | CI 徽章 + 提交自检清单 | `.github/workflows/tests.yml`、`docs/SUBMIT_CHECKLIST.md` |
 | 6 | 完整 workbuddy.md | 本文档 |
 
@@ -308,7 +308,7 @@ cands = apply_nutrition(cands, ...)
 
 ## 测试覆盖
 
-159 个单测，全部零依赖、零 Token、零网络：
+180 个单测，全部零依赖、零 Token、零网络：
 
 ```
 TestUnitTrap          5 个  单位换算防回归（分 vs 元）
@@ -319,10 +319,11 @@ TestSceneMatrix       6 个  四场景参数行为与必填校验
 TestComboSignature    2 个  组合签名排序与 fixture key 对齐
 TestPolicyNormalize   3 个  配置类型归一化
 TestNoOrderingTools   1 个  扫描源码确保无下单调用
+TestStatutoryFestivals 9 个 中国 7 大国家法定节假日主题与素材库
 ```
 
 ```
-Ran 159 tests in 0.043s
+Ran 180 tests in 0.043s
 OK
 ```
 
@@ -331,8 +332,8 @@ OK
 ## 复现方式
 
 ```bash
-python demo.py            # 四条链路，零 Token
-python tests/test_all.py  # 159 个单测
+python demo.py            # 五条链路，零 Token
+python tests/test_all.py  # 180 个单测
 python scheduler.py --fixture --all   # 四档任务，零 Token
 ```
 
