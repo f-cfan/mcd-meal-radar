@@ -804,6 +804,10 @@ class TestCouponEnumeration(unittest.TestCase):
                          "30 天后才过期的卡包券不该占候选位")
 
 
+# 只读常量表的例外清单（大写命名 + 从不被赋值 = 约定为常量）
+IMMUTABLE_TABLES = {"_CUP_ALIASES"}
+
+
 class TestArchitectureIntegrity(unittest.TestCase):
     """架构纪律：依赖方向必须是单向的（collector → solver）。"""
 
@@ -823,6 +827,12 @@ class TestArchitectureIntegrity(unittest.TestCase):
                     if tgt.isupper() and node.value is not None:
                         # 允许不可变常量（CST / SCENES 等），禁止 dict/list 容器
                         if isinstance(node.value, (ast.Dict, ast.List, ast.Set)):
+                            # 显式声明的查表/别名表是例外：它们只读不写，
+                            # 且用大写命名表达「这是常量」——
+                            # 跨模块传状态的容器（曾经的 LAST_BREAKDOWNS）
+                            # 才是要禁的。
+                            if tgt in IMMUTABLE_TABLES:
+                                continue
                             offenders.append(f"{name}:{node.lineno} {tgt}")
         self.assertEqual(offenders, [],
                          f"发现模块级可变全局：{offenders}（应用显式传参）")
@@ -1727,6 +1737,192 @@ class TestPreviewSite(unittest.TestCase):
                          encoding="utf-8").read()
         self.assertRegex(gitignore, r"(?m)^out/",
                          "out/ 必须保持忽略（含敏感数据）")
+
+
+class TestComboNutritionBreakdown(unittest.TestCase):
+    """套餐营养拆解 —— 解决「营养命中率仅 22%」的核心机制。
+
+    背景：官方 list-nutrition-foods 只覆盖**标准单品**（实测 158 项），
+    而菜单以**套餐**为主（实测 131 项里大量是「X四件套」），
+    直接按名称匹配命中率只有约 22% —— 身体层约束在真实推荐面前被架空。
+
+    解法：query-meal-detail 返回套餐子项 → 与标准单品营养表联表相加。
+    **全部来自官方数据，不含任何估算。**
+    """
+
+    def _by_name(self):
+        from mcd_adapter import Nutrition
+        return {
+            "中薯条": Nutrition(kcal=289, protein_g=4, fat_g=12,
+                                carb_g=45, sodium_mg=165, calcium_mg=20),
+            "麦乐鸡5块": Nutrition(kcal=213, protein_g=12, fat_g=14,
+                                   carb_g=8, sodium_mg=422, calcium_mg=None),
+            "可乐中杯": Nutrition(kcal=147, protein_g=0, fat_g=0,
+                                 carb_g=37, sodium_mg=4, calcium_mg=None),
+            "无糖可口可乐中杯": Nutrition(kcal=0, protein_g=0, fat_g=0,
+                                          carb_g=0, sodium_mg=2, calcium_mg=None),
+        }
+
+    def _detail(self):
+        return {
+            "code": "9900016490", "name": "龙焰鸡腿堡四件套",
+            "groups": [
+                {"title": "龙焰鸡腿堡", "pick": 1,
+                 "default": {"code": "521952", "name": "龙焰鸡腿堡"},
+                 "alternatives": []},
+                {"title": "选择小食一", "pick": 1,
+                 "default": {"code": "501205", "name": "中薯条"},
+                 "alternatives": [{"code": "501206", "name": "大薯条",
+                                    "diff_price": "+ ¥2"}]},
+                {"title": "选择小食二", "pick": 1,
+                 "default": {"code": "901401", "name": "麦乐鸡5块"},
+                 "alternatives": []},
+                {"title": "饮料", "pick": 1,
+                 "default": {"code": "903050", "name": "可口可乐中杯"},
+                 "alternatives": [{"code": "903071", "name": "无糖可口可乐中杯",
+                                    "diff_price": "+ ¥0"}]},
+            ],
+        }
+
+    def test_sums_matched_subitems(self):
+        """已命中的子项应正确相加。"""
+        from mcd_adapter import (nutrition_from_combo,
+                                 build_nutrition_alias_index)
+        by_name = self._by_name()
+        idx = build_nutrition_alias_index(by_name)
+        total, matched, unmatched = nutrition_from_combo(self._detail(),
+                                                        by_name, idx)
+        self.assertIn("中薯条", matched)
+        self.assertIn("麦乐鸡5块", matched)
+        # 289 + 213 + 147（可乐）+ 0（龙焰鸡腿堡未命中）
+        self.assertEqual(total.kcal, 649)
+        self.assertEqual(total.protein_g, 16)
+
+    def test_unmatched_subitem_is_reported_not_guessed(self):
+        """🔴 核心纪律：匹配不上的子项必须报出来，绝不用相近品类填补。"""
+        from mcd_adapter import (nutrition_from_combo,
+                                 build_nutrition_alias_index)
+        by_name = self._by_name()
+        idx = build_nutrition_alias_index(by_name)
+        total, matched, unmatched = nutrition_from_combo(self._detail(),
+                                                        by_name, idx)
+        self.assertIn("龙焰鸡腿堡", unmatched,
+                      "营养表没有的子项必须列入 unmatched")
+        self.assertNotIn("龙焰鸡腿堡", matched)
+        self.assertTrue(total.partial, "有未覆盖子项时必须标 partial")
+
+    def test_partial_flag_and_missing_carried(self):
+        from mcd_adapter import (nutrition_from_combo,
+                                 build_nutrition_alias_index)
+        by_name = self._by_name()
+        idx = build_nutrition_alias_index(by_name)
+        total, _, _ = nutrition_from_combo(self._detail(), by_name, idx)
+        self.assertEqual(total.source, "combo_sum")
+        self.assertTrue(total.partial)
+        self.assertIn("龙焰鸡腿堡", total.missing)
+
+    def test_cup_alias_resolves_official_naming_gap(self):
+        """官方两处命名不一致：detail 说「可口可乐中杯」，营养表说「可乐中杯」。"""
+        from mcd_adapter import (nutrition_from_combo,
+                                 build_nutrition_alias_index)
+        by_name = self._by_name()
+        idx = build_nutrition_alias_index(by_name)
+        _, matched, unmatched = nutrition_from_combo(self._detail(),
+                                                    by_name, idx)
+        self.assertIn("可口可乐中杯", matched,
+                      "杯型别名应让「可口可乐中杯」匹配到「可乐中杯」")
+        self.assertNotIn("可口可乐中杯", unmatched)
+
+    def test_no_fuzzy_matching_between_different_products(self):
+        """⚠️ 绝不能用「板烧鸡腿堡」冒充「龙焰鸡腿堡」。
+
+        这是本项目最核心的纪律 —— 一个「帮你省钱」的工具
+        如果在营养数据上做近似匹配，用户没有任何办法发现。
+        """
+        from mcd_adapter import (Nutrition, nutrition_from_combo,
+                                 build_nutrition_alias_index)
+        by_name = dict(self._by_name())
+        by_name["板烧鸡腿堡"] = Nutrition(kcal=391, sodium_mg=1041)  # 相近但不同
+        idx = build_nutrition_alias_index(by_name)
+        total, matched, unmatched = nutrition_from_combo(self._detail(),
+                                                        by_name, idx)
+        self.assertNotIn("龙焰鸡腿堡", matched)
+        self.assertIn("龙焰鸡腿堡", unmatched)
+        # 热量不应含板烧的 391
+        self.assertNotEqual(total.kcal, 649 + 391)
+
+    def test_low_sodium_swap_found(self):
+        """应能从官方替换项里找出降钠选择（无糖可乐钠 2mg vs 可乐 4mg…）。"""
+        from mcd_adapter import find_low_sodium_swap, build_nutrition_alias_index
+        by_name = self._by_name()
+        idx = build_nutrition_alias_index(by_name)
+        detail = self._detail()
+        # 手动构造一个钠偏高的场景以便触发
+        swap = find_low_sodium_swap(detail, by_name, 800, idx)
+        self.assertIsNotNone(swap, "应能找到降钠替换项")
+        name, saved = swap
+        self.assertIn("无糖", name)
+        self.assertGreater(saved, 0)
+
+    def test_nutr_sum_preserves_provenance(self):
+        """🔴 _nutr_sum 必须透传 source/partial/missing。
+
+        早期版本只累加数值，把「部分和」标记丢了——
+        邮件会把 649 kcal（缺 1 项）当成全量展示。
+        """
+        from solver import _nutr_sum
+        from mcd_adapter import MenuItem, Nutrition
+        from decimal import Decimal as D
+        m = Money = __import__("mcd_adapter").Money
+        items = [MenuItem("C1", "四件套", "套餐", (), m(D("39")), m(D("39")))]
+        table = {"C1": Nutrition(kcal=649, protein_g=16, source="combo_sum",
+                                partial=True, missing=("龙焰鸡腿堡",))}
+        total = _nutr_sum(items, table)
+        self.assertEqual(total.source, "combo_sum")
+        self.assertTrue(total.partial)
+        self.assertIn("龙焰鸡腿堡", total.missing)
+
+    def test_nutr_sum_marks_missing_items(self):
+        """表里查不到的 item 也要计入 partial，而不是静默跳过。"""
+        from solver import _nutr_sum
+        from mcd_adapter import MenuItem, Nutrition, Money
+        from decimal import Decimal as D
+        m = Money(D("39"))
+        items = [MenuItem("C1", "四件套", "套餐", (), m, m)]
+        total = _nutr_sum(items, {})
+        self.assertTrue(total.partial)
+        self.assertIn("四件套", total.missing)
+
+    def test_email_discloses_partial_nutrition(self):
+        """邮件必须说明这是部分和 —— 否则用户会误以为是全量。"""
+        from mailer import nutrition_note
+        from mcd_adapter import Nutrition
+        partial = Nutrition(kcal=649, source="combo_sum", partial=True,
+                            missing=("龙焰鸡腿堡",))
+        note = nutrition_note(partial)
+        self.assertIn("子项相加", note)
+        self.assertIn("未覆盖", note)
+        self.assertIn("龙焰鸡腿堡", note)
+        # 直接单品不该有说明
+        self.assertEqual(nutrition_note(Nutrition(kcal=100)), "")
+
+    def test_parse_meal_detail_structure(self):
+        """解析 query-meal-detail 的 rounds 结构。"""
+        import json
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        fx = os.path.join(root, "fixtures", "real_meal_detail.json")
+        if not os.path.exists(fx):
+            self.skipTest("缺少真实套餐详情 fixture")
+        payload = json.load(open(fx, encoding="utf-8"))
+        from mcd_adapter import parse_meal_detail
+        detail = parse_meal_detail({"success": True, "data": payload["data"]})
+        self.assertEqual(detail["name"], "龙焰鸡腿堡四件套")
+        self.assertEqual(len(detail["groups"]), 4)
+        names = [g["default"]["name"] for g in detail["groups"]]
+        self.assertIn("中薯条", names)
+        # 每个组都应有可选项
+        alts = sum(len(g["alternatives"]) for g in detail["groups"])
+        self.assertGreater(alts, 5, "真实数据里替换项应该很多")
 
 
 if __name__ == "__main__":

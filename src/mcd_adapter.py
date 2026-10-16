@@ -155,7 +155,15 @@ class Coupon:
 
 @dataclass(frozen=True)
 class Nutrition:
-    """营养成分。字段缺失时为 None —— 绝不填 0 冒充「无」。"""
+    """营养成分。字段缺失时为 None —— 绝不填 0 冒充「无」。
+
+    ⚠️ 套餐拆解时（nutrition_from_combo）会带上来源与完整度：
+      · source="direct"    官方直接提供该单品营养
+      · source="combo_sum" 由官方套餐子项相加得出
+      · partial=True       有子项未能在营养表里对上，**这是部分和不是全量**
+    partial 的存在是刻意的：部分和被当成全量展示就是数据误导，
+    所以邮件里必须显式说明缺了哪几项。
+    """
 
     kcal: int | None = None
     protein_g: int | None = None
@@ -163,6 +171,9 @@ class Nutrition:
     carb_g: int | None = None
     sodium_mg: int | None = None
     calcium_mg: int | None = None
+    source: str = "direct"
+    partial: bool = False
+    missing: tuple[str, ...] = ()
 
 
 @dataclass
@@ -846,3 +857,209 @@ def profile_summary(profile: "TasteProfile", menu: list[MenuItem] | None = None)
     if hit:
         bits.append(f"历史用券率 {hit:.0%}")
     return " · ".join(bits)
+
+
+# --------------------------------------------------------------------------
+# 套餐详情 → 营养拆解（解决「套餐营养命中率仅 22%」）
+# --------------------------------------------------------------------------
+
+# 杯型别名。官方两处的命名不一致：
+#   query-meal-detail 的 choices →「可口可乐中杯」
+#   list-nutrition-foods         →「可乐中杯」
+# 这类差异是**官方侧的命名不一致**，不是我们能推断的营养值，
+# 所以只做「明确的同物别名」映射，绝不做模糊匹配。
+# 匹配不上就留空 —— 绝不拿相近品类的营养冒充。
+_CUP_ALIASES: dict[str, str] = {
+    "可口可乐": "可乐",
+}
+
+
+def _strip_cup_suffix(name: str) -> str:
+    """去掉杯型后缀（中杯/大杯/小杯），用于建立别名索引。"""
+    s = re.sub(r"[™®]", "", name or "").strip()
+    for junk in ("中杯", "大杯", "小杯"):
+        s = s.replace(junk, "")
+    return s.strip()
+
+
+def build_nutrition_alias_index(by_name: dict[str, Nutrition]) -> dict[str, str]:
+    """{归一化名: 营养表原名} —— 只做「明确同物」的映射。
+
+    归一化规则（保守版）：
+      1. 去掉 ™/® 符号
+      2. 去掉杯型后缀（中杯/大杯/小杯）
+      3. 应用显式别名表（如「可口可乐」→「可乐」）
+
+    ⚠️ **不做**同义词/模糊匹配。实测「龙焰鸡腿堡」在营养表里确实没有
+    （只有「板烧鸡腿堡」），拿板烧的营养冒充龙焰就是编造数据。
+    """
+    index: dict[str, str] = {}
+    for original in by_name:
+        key = _strip_cup_suffix(original)
+        for alias, canonical in _CUP_ALIASES.items():
+            if alias in key:
+                key = key.replace(alias, canonical)
+                break
+        # 归一化后同名但有多个候选时，只在**唯一**时采纳
+        index.setdefault(key, original)
+    return index
+
+
+def parse_meal_detail(payload: dict) -> dict:
+    """query-meal-detail 响应 → 套餐组成。
+
+    返回结构：
+        {
+          "name": 套餐名,
+          "groups": [
+            {"title": 组名, "pick": 取几份,
+             "default": {"code","name"},
+             "alternatives": [{"code","name","diff_price"}]},
+          ],
+        }
+
+    ⚠️ 实测要点（2026-10-16）：
+      · 参数名是 `code`，**不是** `productCode`
+      · 外送场景（beType=2/5/6）必传 `beCode`
+      · 错误信息在 result 顶层（success/code/message），不在 content 里
+    """
+    data = (payload or {}).get("data")
+    if isinstance(data, str):
+        try:
+            data = json.loads(data).get("data")
+        except (ValueError, AttributeError):
+            return {}
+    if not isinstance(data, dict):
+        return {}
+
+    groups: list[dict] = []
+    for rd in data.get("rounds") or []:
+        default = None
+        alts: list[dict] = []
+        for ch in rd.get("choices") or []:
+            item = {
+                "code": str(ch.get("code") or ""),
+                "name": ch.get("name") or "",
+                "diff_price": ch.get("diffPrice"),
+                "support_modify": bool(ch.get("supportModify")),
+            }
+            if ch.get("isDefault") == 1 and default is None:
+                default = {"code": item["code"], "name": item["name"]}
+            else:
+                alts.append(item)
+        if default is None and alts:
+            # 没有标记默认时取第一项，但**如实记录**这一点
+            default = {"code": alts[0]["code"], "name": alts[0]["name"]}
+        groups.append({
+            "title": rd.get("name") or "",
+            "pick": int(rd.get("quantity") or 1),
+            "default": default or {},
+            "alternatives": alts,
+        })
+
+    return {
+        "code": str(data.get("code") or ""),
+        "name": data.get("name") or "",
+        "groups": groups,
+    }
+
+
+def nutrition_from_combo(
+    detail: dict,
+    by_name: dict[str, Nutrition],
+    alias_index: dict[str, str] | None = None,
+) -> tuple[Nutrition, list[str], list[str]]:
+    """套餐组成 + 标准单品营养表 → 套餐营养。
+
+    返回 (营养合计, 已命中的子项名, 未命中的子项名)。
+
+    **纪律**：只累加**官方两边都能对上的**子项。
+    任何子项匹配不上就记入 unmatched，调用方必须如实显示
+    「部分子项营养未提供」，绝不用相近品类的数据填补空缺。
+    """
+    alias_index = alias_index if alias_index is not None \
+        else build_nutrition_alias_index(by_name)
+
+    total = Nutrition()
+    matched: list[str] = []
+    unmatched: list[str] = []
+
+    fields = ("kcal", "protein_g", "fat_g", "carb_g", "sodium_mg", "calcium_mg")
+    # Nutrition 是 frozen dataclass，只能整体重建，不能逐字段赋值
+    acc: dict[str, int | None] = {f: None for f in fields}
+
+    for g in detail.get("groups") or []:
+        d = g.get("default") or {}
+        name = d.get("name")
+        qty = g.get("pick") or 1
+        if not name:
+            continue
+
+        nutrition = by_name.get(name)
+        if nutrition is None:
+            key = _strip_cup_suffix(name)
+            for alias, canonical in _CUP_ALIASES.items():
+                if alias in key:
+                    key = key.replace(alias, canonical)
+                    break
+            hit = alias_index.get(key)
+            if hit:
+                nutrition = by_name.get(hit)
+
+        if nutrition is None:
+            unmatched.append(name)
+            continue
+
+        matched.append(name)
+        for f in fields:
+            v = getattr(nutrition, f, None)
+            if v is None:
+                # 官方数据本身缺这个字段 —— 标为 None，不当 0，也不参与累加
+                acc[f] = None
+                continue
+            cur = acc[f]
+            acc[f] = v * qty if cur is None else cur + v * qty
+
+    return Nutrition(**acc, source="combo_sum", partial=bool(unmatched),
+                     missing=tuple(unmatched)), matched, unmatched
+
+
+def find_low_sodium_swap(
+    detail: dict,
+    by_name: dict[str, Nutrition],
+    current_sodium_mg: int,
+    alias_index: dict[str, str] | None = None,
+) -> tuple[str, int] | None:
+    """在套餐的可替换项里找能显著降钠的选择。
+
+    返回 (选项名, 可省下的钠 mg)，没有明显更优的选择则返回 None。
+
+    这是**基于官方数据的算术**，不是模型建议 ——
+    官方给了每个替换项的差价，营养表给了钠含量，两者一减就知道值不值。
+    """
+    alias_index = alias_index if alias_index is not None \
+        else build_nutrition_alias_index(by_name)
+    if current_sodium_mg <= 0:
+        return None
+
+    best: tuple[str, int] | None = None
+    for g in detail.get("groups") or []:
+        d = g.get("default") or {}
+        if not d.get("name"):
+            continue
+        for alt in g.get("alternatives") or []:
+            name = alt.get("name")
+            if not name:
+                continue
+            n = by_name.get(name)
+            if n is None:
+                key = _strip_cup_suffix(name)
+                hit = alias_index.get(key)
+                n = by_name.get(hit) if hit else None
+            if n is None or n.sodium_mg is None:
+                continue
+            saved = current_sodium_mg - n.sodium_mg * (g.get("pick") or 1)
+            # 至少省 20% 才值得提示，否则是噪音
+            if saved >= current_sodium_mg * 0.2 and (best is None or saved > best[1]):
+                best = (name, saved)
+    return best

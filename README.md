@@ -22,7 +22,7 @@
 [![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?style=flat-square&logo=python&logoColor=white)](#快速体验30秒)
 [![deps](https://img.shields.io/badge/dependencies-0-3FB950?style=flat-square)](#快速体验30秒)
 [![Token](https://img.shields.io/badge/Token-不需要-blue?style=flat-square)](#快速体验30秒)
-[![tests](https://img.shields.io/badge/tests-131%20passed-3FB950?style=flat-square)](tests/test_all.py)
+[![tests](https://img.shields.io/badge/tests-141%20passed-3FB950?style=flat-square)](tests/test_all.py)
 [![MCP](https://img.shields.io/badge/MCP-33%20tools%20官方-DA291C?style=flat-square)](https://mcp.mcd.cn)
 [![License](https://img.shields.io/badge/License-MIT-FFC72C?style=flat-square)](./LICENSE)
 
@@ -58,7 +58,7 @@ python demo.py
 **真实 MCP 响应录制**，跑通四条链路：午间推荐 / 券过期提醒 / Token 失效降级 / 单位陷阱。
 
 ```bash
-python tests/test_all.py     # 131 个单测
+python tests/test_all.py     # 141 个单测
 ```
 
 ---
@@ -92,7 +92,7 @@ python demo.py
 
 **零第三方依赖 · 不需要 MCP Token · 不联网。**
 
-`fixtures/` 中存放 18 份响应样本（其中 6 份是 2026-10-15 真实调用录制，12 份是按官方文档结构整理的样本），`demo.py` 读取它们跑通四条链路：
+`fixtures/` 中存放 19 份响应样本（其中 7 份是 2026-10-15 真实调用录制，12 份是按官方文档结构整理的样本），`demo.py` 读取它们跑通四条链路：
 
 ```
 链路 A  午间推荐      → 四层约束求解，输出可解释建议
@@ -111,7 +111,7 @@ python demo.py
 | Token 失效邮件 | [`docs/samples/sample-email-token-expired.html`](docs/samples/sample-email-token-expired.html) |
 
 ```bash
-# 跑单测（131 个，覆盖单位换算 / 场景矩阵 / 字段缺失 / 双通道 / 画像推导 / 文档一致性）
+# 跑单测（141 个，覆盖单位换算 / 场景矩阵 / 字段缺失 / 双通道 / 画像推导 / 文档一致性）
 python tests/test_all.py
 ```
 
@@ -184,7 +184,7 @@ python tests/test_all.py
 
 本项目尊重这个边界：
 
-- ✅ 调用 10 个只读 Tool + 1 个领券 Tool
+- ✅ 调用 11 个只读 Tool + 1 个领券 Tool
 - ❌ **不调用** `create-order` / `cancel-order` / `mall-create-order` / `party-order-create` / `draw-lottery`
 - ✅ 只把决策做到「就差你确认」
 
@@ -204,7 +204,7 @@ python tests/test_all.py
 | 真实营养 | ✅ **158 项**标准单品营养 |
 | 真实活动 | ✅ **16 个**进行中/未来活动 |
 | 真实积分 | ✅ `availablePoint` 读取成功 |
-| 单测 | **131 passed** |
+| 单测 | **141 passed** |
 
 **推荐结果为真实数据**：
 
@@ -233,8 +233,38 @@ python tests/test_all.py
 其中 **E 最危险** —— API 返回成功但数据是空的，静默失败不易察觉。
 本项目在核价时强制校验 `price` 字段非空才写入计价表，否则标为「未核价」。
 
-关于坑 C：官方**没有提供套餐到单品的成分映射**。这是数据缺口而非实现缺陷，
-所以本项目选择**如实显示「营养未提供」**，而不是估算或按 0 填充。
+### 攻克「套餐营养命中率仅 22%」
+
+官方 `list-nutrition-foods` 只覆盖**标准单品**（实测 158 项），
+而菜单以**套餐**为主 —— 直接按名称匹配命中率只有约 22%，
+意味着「身体层约束」在真实推荐面前被架空。
+
+解法是用官方自己的 **`query-meal-detail`** 拿套餐子项，再与标准单品营养表联表相加：
+
+```
+实测「龙焰鸡腿堡四件套」返回 4 组：
+  主堡「龙焰鸡腿堡」+ 小食一「中薯条」+ 小食二「麦乐鸡5块」+ 饮料「可口可乐中杯」
+  每组还带全部可替换项与差价（大薯条 +¥2 / 无糖可口可乐 +¥0 / 麦咖啡 +¥8 …）
+```
+
+**命中率从 22% 提升到 75%+**，且全部来自官方数据，不含任何估算。
+实测该套餐从「全部未核实」变成 **649 kcal / 蛋白 16g**。
+
+⚠️ **部分和如实标注** —— 实测「龙焰鸡腿堡」在营养表里确实没有
+（营养表只有「板烧鸡腿堡」）。本项目**绝不用板烧冒充龙焰**，
+所以邮件里会写明：
+
+```
+营养：热量 649 kcal · 蛋白 16g
+（由官方套餐子项相加得出，未覆盖：龙焰鸡腿堡）
+```
+
+三个实测要点（官方文档未写明）：
+1. 参数名是 `code` 不是 `productCode`（与 `calculate-price` 不同）
+2. 外送场景必传 `beCode`，漏传时**静默返回空**（与其他接口一致的坑）
+3. **错误信息在 `result` 顶层，不在 `content` 里** —— 只读 content 会误判成无响应
+
+完整记录见 [MCP_INTEGRATION.md](MCP_INTEGRATION.md) 第八章。
 
 完整实测记录见 [MCP_INTEGRATION.md](MCP_INTEGRATION.md) 第七章。
 
@@ -468,8 +498,8 @@ mcd-meal-radar/
 │   ├── solver.py            # 四层约束求解引擎
 │   ├── mailer.py            # 邮件渲染（HTML + 纯文本）
 │   └── mail.py              # 双通道推送（Agent Mail 优先 / SMTP 备选）
-├── fixtures/                # 18 份响应样本（6 份真实调用录制 + 12 份文档结构样本）
-├── tests/test_all.py        # 131 个单测
+├── fixtures/                # 19 份响应样本（7 份真实调用录制 + 12 份文档结构样本）
+├── tests/test_all.py        # 141 个单测
 ├── assets/                  # Banner、架构图
 ├── docs/                    # 部署与提交清单
 ├── MCP_INTEGRATION.md       # MCP 集成说明与实测踩坑记录

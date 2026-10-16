@@ -122,6 +122,7 @@ def render_digest(
           <div style="font-size:13px;color:{CLR["muted"]};line-height:1.9">
             热量 {n["kcal"]} · 蛋白 {n["protein"]} · 钠 {n["sodium"]}
           </div>
+          {f'<div style="font-size:11px;color:{CLR["muted"]};opacity:.85;margin-top:2px">（{_e(nutrition_note(best.nutrition))}）</div>' if nutrition_note(best.nutrition) else ""}
           {f'<ul style="margin:10px 0 0;padding-left:18px;font-size:13px;color:{CLR["ink"]}">{reason_html}</ul>' if reason_html else ''}
           {f'<ul style="margin:8px 0 0;padding-left:18px;font-size:12px;color:{CLR["warn"]}">{warn_html}</ul>' if warn_html else ''}
         </td></tr>""")
@@ -300,6 +301,9 @@ def render_plain(decision: Decision, snapshot: Snapshot, slot: str = "午间",
         n = b.nutrition
         lines.append(f"  营养：热量 {n.kcal if n.kcal is not None else '未核实'} kcal"
                      f" · 蛋白 {n.protein_g if n.protein_g is not None else '未核实'}g")
+        note = nutrition_note(n)
+        if note:
+            lines.append(f"  （{note}）")
         for r in b.reasons:
             lines.append(f"  · {r}")
         for w in b.warnings:
@@ -479,6 +483,21 @@ def _care_line(ctx: CareContext) -> tuple[str, str]:
     if ctx.campaign_count > 0:
         body += " 顺手也把门店这边的好消息给你标出来了。"
     return title, body
+
+
+def nutrition_note(n) -> str:
+    """生成营养数据的来源与完整度说明。
+
+    ⚠️ 这条纪律很关键：套餐拆解得到的营养是**部分和**（有子项对不上），
+    如果不说明，用户会把 213 kcal 当成这套餐的全部热量。
+    对一个主打「不编造」的项目，把部分和展示成全量就是数据误导。
+    """
+    if getattr(n, "source", "direct") == "combo_sum":
+        if getattr(n, "partial", False):
+            missing = "、".join(getattr(n, "missing", ()) or ())
+            return f"由官方套餐子项相加得出，未覆盖：{missing}"
+        return "由官方套餐子项相加得出"
+    return ""
 
 
 def render_care(ctx: CareContext) -> str:

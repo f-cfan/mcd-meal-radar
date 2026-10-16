@@ -331,20 +331,47 @@ def combo_signature(items: list[tuple[str, int]]) -> str:
 # --------------------------------------------------------------------------
 
 def _nutr_sum(items: Iterable[MenuItem], table: dict[str, Nutrition]) -> Nutrition:
-    total = {k: 0 for k in ("kcal", "protein_g", "fat_g", "carb_g", "sodium_mg", "calcium_mg")}
+    """按菜单编码累加营养。
+
+    ⚠️ 必须**透传来源与完整度标记**（source / partial / missing）。
+    早期版本只累加数值，把 query-meal-detail 拆解出来的
+    「由官方子项相加、但有子项未覆盖」这个关键信息丢了 ——
+    于是邮件把 649 kcal（部分和）当成全量展示，
+    而用户会以为这就是这套餐的全部热量。这正是本项目最不能犯的错。
+    """
+    fields = ("kcal", "protein_g", "fat_g", "carb_g", "sodium_mg", "calcium_mg")
+    total: dict = {k: 0 for k in fields}
     seen_any = False
+    partial = False
+    missing: list[str] = []
+    sources: set[str] = set()
+
     for item in items:
         n = table.get(item.code)
         if not n:
+            partial = True
+            missing.append(item.name)
             continue
         seen_any = True
-        for k in total:
-            v = getattr(n, k)
+        sources.add(getattr(n, "source", "direct"))
+        if getattr(n, "partial", False):
+            partial = True
+            missing.extend(getattr(n, "missing", ()) or ())
+        for k in fields:
+            v = getattr(n, k, None)
             if v is not None:
                 total[k] += v
+
     if not seen_any:
-        return Nutrition()
-    return Nutrition(**total)
+        return Nutrition(partial=partial, missing=tuple(missing))
+
+    return Nutrition(
+        **total,
+        # 来源只要有一个是拆解来的，整体就标 combo_sum
+        source="combo_sum" if "combo_sum" in sources else "direct",
+        partial=partial,
+        missing=tuple(dict.fromkeys(missing)),   # 去重保序
+    )
 
 
 def apply_nutrition(

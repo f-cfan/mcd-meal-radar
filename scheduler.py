@@ -29,7 +29,9 @@ from decimal import Decimal
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
 
-from collector import get_snapshot, plan_quotes, quote_candidates  # noqa: E402
+from collector import (  # noqa: E402
+    get_snapshot, plan_quotes, quote_candidates, enrich_combo_nutrition,
+)
 from mcd_adapter import (  # noqa: E402
     McdMcpClient,
     build_taste_profile_from_orders,
@@ -251,15 +253,31 @@ def run_slot(
         meal_now = current_meal_window(slot.hour)
 
         price_table, breakdowns = {}, {}
+        sodium_swaps = {}
         if mode == "live" and snap.menu and not snap.degraded:
             combos, _picked = plan_quotes(snap, profile, policy,
                                           top_k=QUOTE_TOP_K, meal=meal_now)
             if combos and snap.store:
+                client = McdMcpClient()
                 price_table, breakdowns = quote_candidates(
-                    McdMcpClient(), snap.store.store_code, "delivery", combos,
+                    client, snap.store.store_code, "delivery", combos,
                     address_id=os.environ.get("MCD_ADDRESS_ID") or None,
                     be_code=snap.store.be_code,
                 )
+
+                # ③ 套餐营养补齐：官方 list-nutrition-foods 只覆盖标准单品，
+                #    菜单以套餐为主 —— 直接匹配命中率仅约 22%。
+                #    用 query-meal-detail 拿套餐子项再联表相加，
+                #    全部来自官方数据，不含任何估算。
+                enriched, sodium_swaps = enrich_combo_nutrition(
+                    client, snap, snap.store.store_code, combos,
+                    be_code=snap.store.be_code, be_type=2)
+                if enriched:
+                    merged = dict(snap.nutrition)
+                    merged.update(enriched)
+                    snap.nutrition = merged
+                    print(f"  套餐营养补齐 {len(enriched)} 个"
+                          f"（{'、'.join(m.name for m in snap.menu if m.code in enriched)}）")
 
         # ② 求解（纯本地计算，不发请求）
         decision = solve(snap, profile, policy, price_table, breakdowns, meal=meal_now)
