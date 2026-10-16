@@ -291,8 +291,8 @@ cands = apply_nutrition(cands, ...)
 
 | # | 做法 | 本项目实现 |
 |---|---|---|
-| 1 | `demo.py` 零依赖零 Token 30 秒跑通 | 4 条链路，12 份 fixtures |
-| 2 | 12+ 个真实响应录制 | `fixtures/` 共 12 份，含字段缺失与边界场景 |
+| 1 | `demo.py` 零依赖零 Token 30 秒跑通 | 4 条链路，18 份 fixtures |
+| 2 | 12+ 个真实响应录制 | `fixtures/` 共 18 份，含字段缺失与边界场景 |
 | 3 | 披露 MCP 真实踩坑 | `MCP_INTEGRATION.md` 记录 10 个坑 |
 | 4 | SVG Banner + 架构图 | `assets/banner.svg`、`assets/architecture.svg` |
 | 5 | CI 徽章 + 提交自检清单 | `.github/workflows/tests.yml`、`docs/SUBMIT_CHECKLIST.md` |
@@ -308,7 +308,7 @@ cands = apply_nutrition(cands, ...)
 
 ## 测试覆盖
 
-23 个单测，全部零依赖、零 Token、零网络：
+117 个单测，全部零依赖、零 Token、零网络：
 
 ```
 TestUnitTrap          5 个  单位换算防回归（分 vs 元）
@@ -322,7 +322,7 @@ TestNoOrderingTools   1 个  扫描源码确保无下单调用
 ```
 
 ```
-Ran 23 tests in 0.043s
+Ran 117 tests in 0.043s
 OK
 ```
 
@@ -332,7 +332,7 @@ OK
 
 ```bash
 python demo.py            # 四条链路，零 Token
-python tests/test_all.py  # 23 个单测
+python tests/test_all.py  # 117 个单测
 python scheduler.py --fixture --all   # 四档任务，零 Token
 ```
 

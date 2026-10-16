@@ -37,7 +37,8 @@ from mcd_adapter import (  # noqa: E402
 )
 from mail import describe_channels, push  # noqa: E402
 from mailer import (  # noqa: E402
-    CareContext, current_meal_window, render_digest, render_plain, render_token_expired,
+    MEAL_WINDOWS, CareContext, current_meal_window,
+    render_digest, render_plain, render_token_expired,
 )
 from mcd_adapter import MCPError  # noqa: E402
 from solver import DietaryPolicy, Decision, TasteProfile, load_profile, solve  # noqa: E402
@@ -115,6 +116,16 @@ def resolve_profile(snapshot, manual: TasteProfile | None = None) -> TasteProfil
     return cached if cached.order_count or cached.top_codes else (manual or TasteProfile())
 
 
+def _window_passed(window: str, minutes: int) -> bool:
+    """判断某个餐次时段是否已经结束（当前时刻已过其窗口末尾）。
+
+    用于「今天错过了几个餐次」的判定 —— 只有**已经过去**的餐次才算漏，
+    正在进行的和还没到的都不算。
+    """
+    start, end = MEAL_WINDOWS[window]
+    return minutes > end
+
+
 def build_care_context(snapshot, slot, now=None) -> CareContext:
     """从真实数据构造关怀上下文。
 
@@ -134,14 +145,39 @@ def build_care_context(snapshot, slot, now=None) -> CareContext:
                      if c.expires_in_days is not None and 0 < c.expires_in_days <= 3]
 
     # 漏餐判定：仅当有历史订单时才算，否则视为「未知」而非「漏了」
+    #
+    # ⚠️ 早期版本这里是 `skipped = 0 if ordered_today else 1`，
+    # 而 mailer 的触发条件是 `skipped_meals >= 2` —— 于是这个值最大只能是 1，
+    # 导致 README 主打的那句「今天还没顾上吃饭」在真实运行中**永远不会被触发**。
+    #
+    # 现在改为**统计当天已经错过的餐次数量**，语义也和字段名一致：
+    #   · 用真实历史订单判定当天有没有下单（无历史订单 → 0，不猜）
+    #   · 已过时段数 - 已下单次数 = 错过的餐次
+    # 这样「晚餐档发现一天没吃」会得到 skipped=3（早/午/晚都过了），
+    # 自然满足 >=2 的触发条件。
     skipped = 0
     if snapshot.orders:
-        today = now.strftime("%Y%m%d")
-        ordered_today = [o for o in snapshot.orders
-                         if str(o.get("orderId", "")).endswith(today)
-                         or str(o.get("createdAt", "")).startswith(now.strftime("%Y-%m-%d"))]
-        # 今天已下单过 → 没漏；没下单且有历史 → 按「可能漏餐」处理（保守）
-        skipped = 0 if ordered_today else 1
+        # ⚠️ 早期版本用 `orderId.endswith("20261016")` 判「今天是否下单」，
+        # 但真实订单号（ORD-20261016-123 / ORD-20261016123 / 带前缀哈希）
+        # **都不以日期结尾**，这个条件恒为假 —— 于是「今天已下单」永远识别不到，
+        # 漏餐判定在有订单的情况下也会误报。
+        # 改为「日期出现在 ID 中」或「createdAt 以今天开头」，两种格式都覆盖。
+        stamp = now.strftime("%Y%m%d")
+        dash = now.strftime("%Y-%m-%d")
+        ordered_today = [
+            o for o in snapshot.orders
+            if stamp in str(o.get("orderId", "") or "")
+            or stamp in str(o.get("orderNo", "") or "")
+            or str(o.get("createdAt", "") or "").startswith(dash)
+            or str(o.get("orderTime", "") or "").startswith(dash)
+        ]
+        if not ordered_today:
+            # 已过去的餐次时段数（早餐/午餐/下午茶/晚餐/夜市，凌晨不计入）
+            passed_windows = sum(
+                1 for name in ("breakfast", "lunch", "tea", "dinner")
+                if _window_passed(name, now.hour * 60 + now.minute)
+            )
+            skipped = max(0, passed_windows)
 
     return CareContext(
         meal=meal,
@@ -193,9 +229,13 @@ def run_slot(
         # ① 零成本预筛：先决定「问哪些组合的价」，不发请求。
         #    早期版本是「先核价再筛选」，导致邮件里 59/77 显示未核价 ——
         #    那是没做完，不是诚实。
+        # 当前餐次 —— 用于过滤「晚餐推荐麦满分」这类时段错配
+        meal_now = current_meal_window(datetime.now(CST).hour)
+
         price_table, breakdowns = {}, {}
         if mode == "live" and snap.menu and not snap.degraded:
-            combos, _picked = plan_quotes(snap, profile, policy, top_k=QUOTE_TOP_K)
+            combos, _picked = plan_quotes(snap, profile, policy,
+                                          top_k=QUOTE_TOP_K, meal=meal_now)
             if combos and snap.store:
                 price_table, breakdowns = quote_candidates(
                     McdMcpClient(), snap.store.store_code, "delivery", combos,
@@ -204,7 +244,7 @@ def run_slot(
                 )
 
         # ② 求解（纯本地计算，不发请求）
-        decision = solve(snap, profile, policy, price_table, breakdowns)
+        decision = solve(snap, profile, policy, price_table, breakdowns, meal=meal_now)
         profile_text = profile_summary(profile, snap.menu)
 
     # 3) 渲染

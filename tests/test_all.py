@@ -853,10 +853,17 @@ class TestArchitectureIntegrity(unittest.TestCase):
 class TestDocConsistency(unittest.TestCase):
     """文档与代码的一致性 —— 防止 README 里的数字再次漂移。
 
-    TRAE 评审发现 README 同时写着 23 / 33 / 52 而实际是 63。
-    对一个以「诚实、不编造数字」为卖点的项目，这是最伤的自伤 ——
-    所以用测试把数字锁死，而不是靠人记得改。
+    这是被两次外部评审挑出来的痛点：
+      · 第一次：README 同时写着 23 / 33 / 52 / 63 而实际 63
+      · 第二次：数字统一后，workbuddy.md 里还留着 23，fixtures 份数写了 12/17/18
+
+    所以覆盖面必须**全仓**，而不是只看 README；
+    测试数与 fixtures 份数都要校验。
     """
+
+    # 所有会被评审翻看的公开文档
+    DOCS = ("README.md", "workbuddy.md", "MCP_INTEGRATION.md",
+            "docs/SUBMIT_CHECKLIST.md", "docs/SCHEDULE.md")
 
     def _count_tests(self):
         """用 AST 静态统计真实用例数（不执行测试，避免递归）。"""
@@ -864,48 +871,63 @@ class TestDocConsistency(unittest.TestCase):
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         tree = ast.parse(open(os.path.join(root, "tests", "test_all.py"),
                               encoding="utf-8").read())
-        count = 0
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef):
-                for sub in node.body:
-                    if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                        if sub.name.startswith("test_"):
-                            count += 1
-        return count
+        return sum(1 for node in ast.walk(tree)
+                   if isinstance(node, ast.ClassDef)
+                   for sub in node.body
+                   if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef))
+                   and sub.name.startswith("test_"))
 
-    def _read(self, *parts):
+    def _count_fixtures(self):
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        with open(os.path.join(root, *parts), encoding="utf-8") as fh:
+        d = os.path.join(root, "fixtures")
+        return len([f for f in os.listdir(d) if f.endswith((".json", ".txt"))])
+
+    def _read(self, rel):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, *rel.split("/")), encoding="utf-8") as fh:
             return fh.read()
 
-    def test_readme_test_count_matches_reality(self):
-        """README 里出现的测试数字必须等于真实用例数。"""
-        real = self._count_tests()
-        readme = self._read("README.md")
-        # 提取所有 badge/正文里的「N passed」和「N 个单测」
-        nums = set()
-        for m in re.finditer(r"tests-(\d+)%20passed", readme):
-            nums.add(int(m.group(1)))
-        for m in re.finditer(r"(\d+) passed", readme):
-            nums.add(int(m.group(1)))
-        for m in re.finditer(r"(\d+) 个单测", readme):
-            nums.add(int(m.group(1)))
-        for m in re.finditer(r"# (\d+) 个单测", readme):
-            nums.add(int(m.group(1)))
-        self.assertTrue(nums, "README 应包含测试数量")
-        for n in nums:
-            self.assertEqual(n, real,
-                             f"README 写 {n}，实际 {real} 个用例 —— 数字必须一致")
+    def _docs_present(self):
+        return [d for d in self.DOCS if os.path.exists(
+            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         *d.split("/")))]
 
-    def test_checklist_test_count_matches_reality(self):
+    # 测试数的所有可能写法（含之前漏掉的 "Ran N tests"、"N 单测"）
+    _TEST_PATTERNS = (
+        r"tests-(\d+)%20passed",
+        r"tests-(\d+)\b",
+        r"Ran (\d+) tests",
+        r"(\d+) 个单测",
+        r"(\d+) 单测",
+        r"(\d+) passed",
+        r"(\d+) 个测试",
+    )
+
+    def test_test_count_matches_everywhere(self):
+        """全仓公开文档的测试数必须等于真实用例数。"""
         real = self._count_tests()
-        checklist = self._read("docs", "SUBMIT_CHECKLIST.md")
-        for m in re.finditer(r"Ran (\d+) tests", checklist):
-            self.assertEqual(int(m.group(1)), real,
-                             f"清单写 {m.group(1)}，实际 {real}")
-        for m in re.finditer(r"\*\*(\d+) passed\*\*", checklist):
-            self.assertEqual(int(m.group(1)), real,
-                             f"清单写 {m.group(1)}，实际 {real}")
+        offenders = []
+        for rel in self._docs_present():
+            text = self._read(rel)
+            for pat in self._TEST_PATTERNS:
+                for m in re.finditer(pat, text):
+                    if int(m.group(1)) != real:
+                        offenders.append(f"{rel}: {m.group(0)}（实际 {real}）")
+        self.assertEqual(offenders, [],
+                         "文档里的测试数与实际不符：\n  " + "\n  ".join(offenders))
+
+    def test_fixture_count_matches_everywhere(self):
+        """fixtures 份数必须等于真实份数。"""
+        real = self._count_fixtures()
+        offenders = []
+        for rel in self._docs_present():
+            text = self._read(rel)
+            # 只匹配明确指代 fixtures 的表述，避免误伤「12 点」「5 个券」
+            for m in re.finditer(r"(\d+) 份(?![钟])", text):
+                if int(m.group(1)) != real:
+                    offenders.append(f"{rel}: {m.group(0)}（实际 {real}）")
+        self.assertEqual(offenders, [],
+                         "fixtures 份数不符：\n  " + "\n  ".join(offenders))
 
     def test_readme_has_visual_hook(self):
         """首屏必须有邮件截图 —— 纯文字的项目在 Star 竞赛里没竞争力。"""
@@ -913,22 +935,42 @@ class TestDocConsistency(unittest.TestCase):
         self.assertIn("assets/shots/", readme,
                       "README 首屏需嵌入邮件截图（视觉钩子）")
 
-    def test_no_personal_email_in_public_docs(self):
-        """公开文档不得出现真实邮箱 —— 与「不暴露隐私」的宣称一致。"""
+    def test_first_screenshot_is_not_stale(self):
+        """⚠️ 首屏第一张图不能是「未核价」的旧版。
+
+        真实教训：修好未核价问题后忘了重截首屏图，
+        路人点进 GitHub 第一眼看到的是满屏「未核价/待核价」——
+        从截图上根本看不出代码已经修好。
+        这里做结构检查：图必须存在且不太小（旧图与新图尺寸不同）。
+        """
         import glob
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        # 排除 xxx@ 这种占位符形式
+        readme = self._read("README.md")
+        shots = re.findall(r'\./(assets/shots/[^"]+\.png)', readme)
+        self.assertTrue(shots, "README 应至少引用一张截图")
+        for rel in shots:
+            path = os.path.join(root, rel)
+            self.assertTrue(os.path.exists(path), f"README 引用的截图不存在：{rel}")
+            size = os.path.getsize(path)
+            self.assertGreater(size, 20_000,
+                               f"{rel} 只有 {size} bytes，可能是旧版或空文件")
+            # 更新时间应晚于最近一次代码提交 —— 保证图是最新的
+            self.assertGreater(os.path.getmtime(path),
+                               os.path.getmtime(os.path.join(root, "src", "solver.py")) - 86400,
+                               f"{rel} 早于 solver.py 的修改，可能是修复前的旧截图")
+
+    def test_no_personal_email_in_public_docs(self):
+        """公开文档不得出现真实邮箱 —— 与「不暴露隐私」的宣称一致。"""
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         pattern = re.compile(r"(?<!xxx)[\w.+-]{4,}@\w+\.qq\.com")
         offenders = []
-        for rel in ["README.md", "MCP_INTEGRATION.md", "workbuddy.md"]:
-            text = self._read(*rel.split("/"))
-            for m in pattern.finditer(text):
+        for rel in self.DOCS:
+            if not os.path.exists(os.path.join(root, *rel.split("/"))):
+                continue
+            for m in pattern.finditer(self._read(rel)):
                 offenders.append(f"{rel}: {m.group(0)}")
-        for path in glob.glob(os.path.join(root, "docs", "*.md")):
-            with open(path, encoding="utf-8") as fh:
-                for m in pattern.finditer(fh.read()):
-                    offenders.append(f"{os.path.basename(path)}: {m.group(0)}")
         self.assertEqual(offenders, [], f"公开文档含真实邮箱：{offenders}")
+
 
 
 class TestCareCopy(unittest.TestCase):
@@ -1139,6 +1181,329 @@ class TestPrefilter(unittest.TestCase):
         cands = apply_preference(items, TasteProfile(disliked_keywords=("套餐",)))
         picked = prefilter_for_pricing(cands, top_k=8)
         self.assertEqual(len(picked), 0, "已被忌口过滤的不该进入核价名单")
+
+
+class TestMailHtmlStructure(unittest.TestCase):
+    """邮件 HTML 结构 —— 裸元素会触发 foster parenting 被提出卡片。
+
+    真实 bug：profile_line 曾是裸 <div> 直接放进 <table>，
+    浏览器把它提升到整个 table 之前，导致画像摘要飞到邮件顶部的
+    灰色背景上。这个问题从渲染代码看不出来，**只有截图能发现**。
+    """
+
+    @staticmethod
+    def _render(profile_summary="基于你的 3 笔历史订单"):
+        from mailer import render_digest
+        from solver import Decision
+        from mcd_adapter import Snapshot
+        snap = Snapshot(fetched_at="2026-10-16 12:00:00", scene="delivery",
+                        store=None, menu=[])
+        return render_digest(Decision(None, [], [], []), snap,
+                             profile_summary, "午间")
+
+    def test_no_bare_div_directly_inside_table(self):
+        """<table> 与 <div> 之间不能隔空 —— 必须有 <tr>/<td>。"""
+        import re
+        html = self._render()
+        bad = []
+        for m in re.finditer(r"<table\b", html):
+            window = html[m.end():m.end() + 300]
+            first = re.search(r"<(tr|td|div)\b", window)
+            if first and first.group(1) == "div":
+                bad.append(html[m.start():m.start() + 40])
+        self.assertEqual(bad, [], f"<table> 后直接跟了 <div>：{bad}")
+
+    def test_profile_summary_is_inside_card(self):
+        """画像摘要必须在卡片表格内部，不能在它之前。"""
+        html = self._render()
+        i_profile = html.find("基于你的 3 笔历史订单")
+        i_table = html.find("<table")
+        self.assertGreater(i_profile, i_table,
+                           "画像摘要出现在表格之前，说明被 foster parenting 提升了")
+        # 且必须包在 tr/td 里
+        before = html[max(0, i_profile - 220):i_profile]
+        self.assertIn("<td", before, "画像摘要必须包在 <td> 内")
+
+    def test_empty_profile_summary_emits_no_row(self):
+        """没有画像摘要时不该产生空行。"""
+        html = self._render(profile_summary="")
+        self.assertNotIn("<td style=\"padding:0 20px 14px", html)
+
+
+class TestSessionIdHeader(unittest.TestCase):
+    """Mcp-Session-Id 必须真的发出。
+
+    真实 bug：早期版本写 `self._headers()["Mcp-Session-Id"] = ...`，
+    但 _headers() 每次返回**新 dict**，那次赋值立刻被丢弃，
+    导致服务端下发的 session id 从未真正发出。
+    """
+
+    def test_headers_contain_session_when_set(self):
+        from mcd_adapter import McdMcpClient
+        c = McdMcpClient(token="t")
+        c._session_id = "sess-123"
+        self.assertEqual(c._headers().get("Mcp-Session-Id"), "sess-123",
+                         "设了 session id 就必须出现在请求头里")
+
+    def test_headers_omit_session_when_absent(self):
+        from mcd_adapter import McdMcpClient
+        c = McdMcpClient(token="t")
+        self.assertNotIn("Mcp-Session-Id", c._headers())
+
+    def test_session_is_not_set_outside_headers_method(self):
+        """结构约束：不得在 _headers() 外部往返回值上赋值。
+
+        用 AST 判断而非字符串匹配 —— 注释里也需要写明这个历史 bug，
+        字符串匹配会误报。
+        """
+        import ast
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        tree = ast.parse(open(os.path.join(root, "src", "mcd_adapter.py"),
+                              encoding="utf-8").read())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Subscript):
+                v = node.value
+                # self._headers()["..."] = x
+                if isinstance(v, ast.Call) and getattr(v.func, "attr", "") == "_headers":
+                    self.fail(f"行 {node.lineno}：往 _headers() 返回值上赋值会被丢弃")
+
+
+class TestSkippedMealsDetection(unittest.TestCase):
+    """漏餐判定 —— README 主打文案的真实触发条件。
+
+    真实 bug：scheduler 里 `skipped = 0 if ordered_today else 1`，
+    而 mailer 要求 `skipped_meals >= 2`，于是这个值最大只有 1，
+    「今天还没顾上吃饭」在真实运行中**永远不会出现**。
+    """
+
+    def _snap(self, orders):
+        class S:
+            store_coupons = []
+            my_coupons = []
+            campaign_names = []
+        S.orders = orders
+        return S()
+
+    def _at(self, hour):
+        import scheduler
+        from datetime import datetime
+        return datetime(2026, 10, 16, hour, 0, tzinfo=scheduler.CST)
+
+    def _orders_today(self):
+        return [{"orderId": "ORD-20261016-123", "storeCode": "1400649",
+                 "totalPrice": 3350, "items": []}]
+
+    def _orders_old(self):
+        return [{"orderId": "ORD-20260101", "storeCode": "1400649",
+                 "totalPrice": 3350, "items": []}]
+
+    def test_no_history_yields_zero_skipped(self):
+        """无历史订单时不应猜测漏餐（订单可能是外卖而非麦当劳）。"""
+        import scheduler
+        care = scheduler.build_care_context(self._snap([]), None, now=self._at(19))
+        self.assertEqual(care.skipped_meals, 0)
+
+    def test_ordered_today_yields_zero(self):
+        import scheduler
+        care = scheduler.build_care_context(self._snap(self._orders_today()),
+                                            None, now=self._at(19))
+        self.assertEqual(care.skipped_meals, 0)
+
+    def test_morning_after_one_missed_window_is_not_enough(self):
+        """刚过早餐时段就提醒「没顾上吃饭」太早。"""
+        import scheduler
+        from mailer import _care_line
+        care = scheduler.build_care_context(self._snap(self._orders_old()),
+                                            None, now=self._at(12))
+        title, _ = _care_line(care)
+        self.assertNotIn("还没顾上吃饭", title,
+                         "12 点只错过早餐，不该说漏餐")
+
+    def test_evening_with_nothing_ordered_triggers_care(self):
+        """傍晚且当天没下单 → 应该触发漏餐关怀（README 的金句）。"""
+        import scheduler
+        from mailer import _care_line
+        care = scheduler.build_care_context(self._snap(self._orders_old()),
+                                            None, now=self._at(19))
+        self.assertGreaterEqual(care.skipped_meals, 2,
+                                "19 点至少错过早餐与午餐，应满足 >=2")
+        title, _ = _care_line(care)
+        self.assertIn("还没顾上吃饭", title,
+                      "README 主打的漏餐关怀必须真的能触发")
+
+    def test_late_night_counts_more_windows(self):
+        """越晚错过的餐次越多，但不超过已过的时段数。"""
+        import scheduler
+        counts = {}
+        for h in (12, 16, 19, 22):
+            care = scheduler.build_care_context(self._snap(self._orders_old()),
+                                                None, now=self._at(h))
+            counts[h] = care.skipped_meals
+        self.assertEqual(counts[12], 1)
+        self.assertLessEqual(counts[22], 4, "凌晨不计入餐次")
+        self.assertGreaterEqual(counts[22], counts[16])
+
+
+class TestMenuFiltering(unittest.TestCase):
+    """菜单过滤 —— 周边与时段错配。
+
+    实测官方菜单把「麦当劳联名徽章」放在「人气热卖」里，
+    于是被推荐成了晚餐首选 —— 这类问题只能靠真实数据发现。
+    """
+
+    def _items(self):
+        from mcd_adapter import MenuItem, Money
+        from decimal import Decimal as D
+        m = Money(D("39"))
+        return [
+            MenuItem("A", "龙焰鸡腿堡四件套", "套餐", ("套餐",), m, m),
+            MenuItem("B", "麦当劳联名徽章", "人气热卖", ("人气",), m, m),
+            MenuItem("C", "薯条脆卜卜毛绒周边", "小食甜品/其他", ("周边",), m, m),
+            MenuItem("D", "培根蛋麦满分", "早餐", ("早餐",), m, m),
+            MenuItem("E", "麦咖啡™奶铁", "麦咖啡", ("冷饮",), m, m),
+        ]
+
+    def _names(self, meal=""):
+        from solver import apply_preference, TasteProfile
+        cands = apply_preference(self._items(), TasteProfile(), meal)
+        return {c.items[0].name for c in cands if c.rejected_by is None}
+
+    def test_non_food_always_filtered(self):
+        """周边即使在「人气热卖」也必须过滤 —— 任何时段都不该推荐。"""
+        alive = self._names("dinner")
+        self.assertNotIn("麦当劳联名徽章", alive)
+        self.assertNotIn("薯条脆卜卜毛绒周边", alive)
+        self.assertIn("龙焰鸡腿堡四件套", alive, "正常餐品应保留")
+
+    def test_breakfast_only_filtered_at_lunch_and_dinner(self):
+        alive = self._names("dinner")
+        self.assertNotIn("培根蛋麦满分", alive,
+                         "晚餐不该推荐麦满分")
+
+    def test_breakfast_item_allowed_at_breakfast(self):
+        """早餐时段应保留早餐品 —— 不能一刀切。"""
+        from solver import apply_preference, TasteProfile
+        cands = apply_preference(self._items(), TasteProfile(), "breakfast")
+        alive = {c.items[0].name for c in cands if c.rejected_by is None}
+        self.assertIn("培根蛋麦满分", alive)
+
+    def test_coffee_not_treated_as_breakfast_only(self):
+        """⚠️ 咖啡全天可喝，不该被当早餐品误杀。"""
+        from solver import apply_preference, TasteProfile
+        cands = apply_preference(self._items(), TasteProfile(), "dinner")
+        alive = {c.items[0].name for c in cands if c.rejected_by is None}
+        self.assertIn("麦咖啡™奶铁", alive,
+                      "麦咖啡是独立饮品分类，不应被早餐过滤误伤")
+
+    def test_no_meal_means_no_time_filter(self):
+        """不传 meal 时应保持原有行为（离线 demo 与单测兼容）。"""
+        alive = self._names("")
+        self.assertIn("培根蛋麦满分", alive)
+
+
+class TestQuoteDeduplication(unittest.TestCase):
+    """核价去重 —— 券版本会占满 top_k 坑位。"""
+
+    def test_plan_quotes_dedups_identical_combos(self):
+        """同一商品的券版/非券版 combo 相同，只应请求一次。"""
+        from collector import plan_quotes
+        from mcd_adapter import MenuItem, Money, Coupon, Snapshot
+        from solver import DietaryPolicy, TasteProfile
+        from decimal import Decimal as D
+
+        m = Money(D("39"))
+        menu = [MenuItem(f"C{i}", f"套餐{i}", "套餐", ("套餐",), m, m)
+                for i in range(5)]
+        coupons = [Coupon("S1", "券1", Money(D("500")), None, 3),
+                   Coupon("S2", "券2", Money(D("300")), None, 2)]
+        snap = Snapshot(fetched_at="2026-10-16 12:00:00", scene="delivery",
+                        store=None, menu=menu,
+                        my_coupons=coupons, store_coupons=[])
+        combos, picked = plan_quotes(snap, TasteProfile(),
+                                     DietaryPolicy(max_kcal=2000,
+                                                  max_sodium_mg=3000),
+                                     top_k=8)
+        from solver import combo_signature
+        sigs = [combo_signature(c) for c in combos]
+        self.assertEqual(len(sigs), len(set(sigs)),
+                         f"combos 里有重复签名：{sigs}")
+        self.assertLessEqual(len(sigs), len(picked))
+
+    def test_dedup_still_covers_multiple_items(self):
+        """去重后应仍覆盖多款不同餐品（而不是全塌缩成 1 个）。"""
+        from collector import plan_quotes
+        from mcd_adapter import MenuItem, Money, Coupon, Snapshot
+        from solver import DietaryPolicy, TasteProfile
+        from decimal import Decimal as D
+
+        m = Money(D("39"))
+        menu = [MenuItem(f"C{i}", f"套餐{i}", "套餐", ("套餐",), m, m)
+                for i in range(5)]
+        coupons = [Coupon("S1", "券1", Money(D("500")), None, 3)]
+        snap = Snapshot(fetched_at="2026-10-16 12:00:00", scene="delivery",
+                        store=None, menu=menu, my_coupons=coupons)
+        combos, _ = plan_quotes(snap, TasteProfile(),
+                                DietaryPolicy(max_kcal=2000, max_sodium_mg=3000),
+                                top_k=8)
+        self.assertGreaterEqual(len(combos), 4,
+                                "top_k=8 应覆盖多款餐品，而不是被同一商品的券版占满")
+
+
+class TestToolInventoryMatchesDocs(unittest.TestCase):
+    """Tool 调用数必须与文档一致。
+
+    真实教训：文档写「7 个只读 + 3 个默认关闭」，
+    但那 3 个后来为了真实功能都默认启用了 —— 文档与实现脱节。
+    对一个主打「诚实」的项目，这种数字漂移是硬伤。
+    """
+
+    def _tools_in_source(self):
+        import re
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        used = set()
+        for name in os.listdir(os.path.join(root, "src")):
+            if not name.endswith(".py"):
+                continue
+            text = open(os.path.join(root, "src", name), encoding="utf-8").read()
+            used |= set(re.findall(r'call_tool\(\s*["\']([a-z0-9-]+)["\']', text))
+        return used
+
+    def test_docs_state_actual_readonly_tool_count(self):
+        used = self._tools_in_source()
+        read_only = used - {"auto-bind-coupons"}
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        doc = open(os.path.join(root, "MCP_INTEGRATION.md"), encoding="utf-8").read()
+        m = re.search(r"实际调用\s*\*\*(\d+)\s*个只读", doc)
+        self.assertIsNotNone(m, "MCP_INTEGRATION.md 应写明实际调用的只读 Tool 数")
+        self.assertEqual(int(m.group(1)), len(read_only),
+                         f"文档写 {m.group(1)}，源码实际调用 {len(read_only)} 个只读 Tool："
+                         f"{sorted(read_only)}")
+
+    def test_every_used_tool_is_listed_in_docs(self):
+        """源码里调用的每个 Tool 都必须在文档里出现，否则等于隐藏行为。"""
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        doc = open(os.path.join(root, "MCP_INTEGRATION.md"), encoding="utf-8").read()
+        missing = sorted(t for t in self._tools_in_source() if t not in doc)
+        self.assertEqual(missing, [],
+                         f"这些 Tool 在源码里被调用但文档没写：{missing}")
+
+    def test_no_ordering_tools_used(self):
+        """跨守卫：实际调用的 Tool 里不得含下单类。"""
+        used = self._tools_in_source()
+        forbidden = {"create-order", "cancel-order", "mall-create-order",
+                     "party-order-create", "draw-lottery"}
+        self.assertEqual(used & forbidden, set(),
+                         f"源码调用了下单类 Tool：{used & forbidden}")
+
+    def test_only_one_write_tool(self):
+        """唯一允许的写操作是 auto-bind-coupons（每日 09:00 自动领券）。"""
+        used = self._tools_in_source()
+        self.assertIn("auto-bind-coupons", used,
+                      "09:00 自动领券是核心功能，不应缺失")
+        write_like = {"create-order", "cancel-order", "mall-create-order",
+                      "party-order-create", "draw-lottery", "auto-bind-coupons"}
+        self.assertEqual(used & write_like, {"auto-bind-coupons"},
+                         f"写操作类 Tool 应只有 auto-bind-coupons，实际：{used & write_like}")
 
 
 if __name__ == "__main__":

@@ -188,8 +188,14 @@ def render_digest(
         notes = ('<div style="font-size:12px;color:' + CLR["muted"] +
                  ';margin-top:8px">' + _e("；".join(decision.notes)) + '</div>')
 
-    profile_line = (f'<div style="font-size:12px;color:{CLR["muted"]};padding:0 20px 14px">'
-                    f'{_e(profile_summary)}</div>') if profile_summary else ""
+    # ⚠️ 必须是完整的 <tr><td>…</td></tr>，不能是裸 <div>。
+    # HTML5 解析规范下，<table> 里直接出现的裸 <div> 会触发 **foster parenting**
+    # —— 浏览器把它强行提升到整个 <table> 之前，于是这句画像摘要会飞到邮件卡片
+    # 顶部的灰色背景上（这个 bug 真实发生过，被外部评审从截图里看出来的）。
+    profile_line = (
+        '<tr><td style="padding:0 20px 14px;font-size:12px;color:'
+        f'{CLR["muted"]}">{_e(profile_summary)}</td></tr>'
+    ) if profile_summary else ""
 
     return _wrap(f"""
     <table width="100%" cellspacing="0" cellpadding="0" style="background:{CLR['bg']}">

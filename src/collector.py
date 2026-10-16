@@ -99,7 +99,8 @@ def load_price_table_from_fixtures() -> dict[str, object]:
     }
 
 
-def plan_quotes(snapshot: Snapshot, profile, policy, top_k: int = 8):
+def plan_quotes(snapshot: Snapshot, profile, policy, top_k: int = 8,
+                meal: str = ""):
     """决定「问哪些组合的价」—— 零成本预筛，不发任何请求。
 
     ⚠️ 这是「未核价」问题的根治点。
@@ -113,18 +114,41 @@ def plan_quotes(snapshot: Snapshot, profile, policy, top_k: int = 8):
 
     返回 (待核价组合列表, 预筛后的候选)。
     """
-    from solver import apply_preference, enumerate_coupon_combinations, prefilter_for_pricing
+    from solver import (apply_preference, combo_signature,
+                       enumerate_coupon_combinations, prefilter_for_pricing)
 
     if not snapshot.menu:
         return [], []
 
-    cands = apply_preference(snapshot.menu, profile)
+    cands = apply_preference(snapshot.menu, profile, meal)
     if snapshot.my_coupons or snapshot.store_coupons:
         cands = enumerate_coupon_combinations(
             cands, snapshot.my_coupons, snapshot.store_coupons)
 
     picked = prefilter_for_pricing(cands, top_k=top_k)
-    combos = [[(i.code, 1) for i in c.items] for c in picked]
+
+    # ⚠️ 按商品签名去重 —— 这是核价配额被浪费的根因。
+    # enumerate_coupon_combinations 会把同一个商品拆成
+    # 「无券版 + 券1 版 + 券2 版」三个候选，而常点商品底分高（+50），
+    # 于是 prefilter 取前 8 名时，往往同一个商品占了 3 个坑位。
+    # 它们的 combo 完全相同（都是 [(code, 1)]），
+    # 导致对同一份商品重复发起 calculate-price 请求，
+    # 真正被核价的**不同餐品**可能只有 3~4 款。
+    #
+    # 去重后 top_k 才真正覆盖「8 款不同餐品」。
+    # 注意：去重只影响**请求**，不影响候选本身 ——
+    # 券版与非券版共用同一个 calculate-price 结果，符合官方语义
+    # （calculate-price 入参不接 couponId，券的抵扣体现在返回的 discount 里）。
+    seen: set[str] = set()
+    combos: list[list[tuple[str, int]]] = []
+    for c in picked:
+        combo = [(i.code, 1) for i in c.items]
+        sig = combo_signature(combo)
+        if sig in seen:
+            continue
+        seen.add(sig)
+        combos.append(combo)
+
     return combos, picked
 
 

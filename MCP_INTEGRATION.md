@@ -27,9 +27,15 @@
 
 ## 一、Tool 使用清单
 
-本项目仅调用 **7 个只读 Tool** 与 **1 个领券 Tool**，**不调用任何下单类 Tool**。
+本项目实际调用 **10 个只读 Tool** 与 **1 个领券 Tool**，**不调用任何下单类 Tool**。
 
-### 使用中（8 个）
+> ⚠️ 早期版本这里写的是「7 个只读 + 3 个默认关闭」，
+> 但那 3 个（`query-my-account` / `order-list` / `delivery-query-addresses`）
+> 后来都为了真实功能**默认启用了**（积分提醒、偏好画像推导、地址解析）。
+> 文档与实现脱节会让评审质疑其他数字，故已按源码实际调用重新统计。
+> 该数量由 `TestDocConsistency` 从源码 AST 校验，改了代码不改文档会失败。
+
+### 使用中（11 个）
 
 | Tool | 用途 | 调用档位 |
 |---|---|---|
@@ -41,14 +47,15 @@
 | `calculate-price` | 对候选组合真实计价 | 全档 |
 | `campaign-calendar` | 当月活动日历 | 全档 |
 | `auto-bind-coupons` | 自动领取当前全部可用券 | 每日 09:00 |
+| `query-my-account` | 积分余额（字段是 `availablePoint`，不是 `available`） | 全档 |
+| `order-list` | 历史订单，用于自动推导偏好画像 | 全档 |
+| `delivery-query-addresses` | 取地址簿（仅在未配 `MCD_ADDRESS_ID` 时调用） | 按需 |
 
-### 已实现但默认关闭（保留能力，需显式开启）
+### 已实现但未启用（保留能力）
 
-| Tool | 说明 | 默认状态 |
+| Tool | 说明 | 状态 |
 |---|---|---|
-| `query-my-account` | 积分余额，用于「即将过期积分」提醒 | 关闭 |
-| `query-nearby-stores` | 到店场景的附近门店 | 关闭 |
-| `order-list` | 历史订单，用于首次构建偏好画像 | 关闭 |
+| `query-nearby-stores` | 到店场景的附近门店（外送不需要，故未启用） | 未启用 |
 
 ### 明确不使用（安全边界）
 

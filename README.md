@@ -22,7 +22,7 @@
 [![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?style=flat-square&logo=python&logoColor=white)](#快速体验30秒)
 [![deps](https://img.shields.io/badge/dependencies-0-3FB950?style=flat-square)](#快速体验30秒)
 [![Token](https://img.shields.io/badge/Token-不需要-blue?style=flat-square)](#快速体验30秒)
-[![tests](https://img.shields.io/badge/tests-94%20passed-3FB950?style=flat-square)](tests/test_all.py)
+[![tests](https://img.shields.io/badge/tests-117%20passed-3FB950?style=flat-square)](tests/test_all.py)
 [![MCP](https://img.shields.io/badge/MCP-33%20tools%20官方-DA291C?style=flat-square)](https://mcp.mcd.cn)
 [![License](https://img.shields.io/badge/License-MIT-FFC72C?style=flat-square)](./LICENSE)
 
@@ -40,11 +40,11 @@ cd mcd-meal-radar
 python demo.py
 ```
 
-不需要 MCP Token，不装任何第三方库，也不联网 —— `fixtures/` 里存着 17 份
+不需要 MCP Token，不装任何第三方库，也不联网 —— `fixtures/` 里存着 18 份
 **真实 MCP 响应录制**，跑通四条链路：午间推荐 / 券过期提醒 / Token 失效降级 / 单位陷阱。
 
 ```bash
-python tests/test_all.py     # 94 个单测
+python tests/test_all.py     # 117 个单测
 ```
 
 ---
@@ -78,7 +78,7 @@ python demo.py
 
 **零第三方依赖 · 不需要 MCP Token · 不联网。**
 
-`fixtures/` 中存放 18 份响应样本（其中 5 份是 2026-10-15 真实调用录制），`demo.py` 读取它们跑通四条链路：
+`fixtures/` 中存放 18 份响应样本（其中 18 份是 2026-10-15 真实调用录制），`demo.py` 读取它们跑通四条链路：
 
 ```
 链路 A  午间推荐      → 四层约束求解，输出可解释建议
@@ -190,7 +190,7 @@ python tests/test_all.py
 | 真实营养 | ✅ **158 项**标准单品营养 |
 | 真实活动 | ✅ **16 个**进行中/未来活动 |
 | 真实积分 | ✅ `availablePoint` 读取成功 |
-| 单测 | **94 passed** |
+| 单测 | **117 passed** |
 
 **推荐结果为真实数据**：
 
@@ -454,8 +454,8 @@ mcd-meal-radar/
 │   ├── solver.py            # 四层约束求解引擎
 │   ├── mailer.py            # 邮件渲染（HTML + 纯文本）
 │   └── mail.py              # 双通道推送（Agent Mail 优先 / SMTP 备选）
-├── fixtures/                # 18 份响应样本（5 份真实调用录制）
-├── tests/test_all.py        # 94 个单测
+├── fixtures/                # 18 份响应样本（18 份真实调用录制）
+├── tests/test_all.py        # 117 个单测
 ├── assets/                  # Banner、架构图
 ├── docs/                    # 部署与提交清单
 ├── MCP_INTEGRATION.md       # MCP 集成说明与实测踩坑记录

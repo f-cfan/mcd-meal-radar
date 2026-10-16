@@ -117,16 +117,60 @@ class Decision:
 # 层 1：偏好
 # --------------------------------------------------------------------------
 
-def apply_preference(items: list[MenuItem], profile: TasteProfile) -> list[Candidate]:
+# 非食品项关键词 —— 官方菜单里混着联名周边（实测有「麦当劳联名徽章」
+# 「薯条脆卜卜毛绒周边」），它们被归在「人气热卖」里所以会被推荐出来，
+# 但**晚饭推荐吃徽章显然是错的**。这类项直接硬过滤，不参与打分。
+NON_FOOD_KEYWORDS: tuple[str, ...] = (
+    "徽章", "毛绒", "周边", "玩具", "购物袋", "钥匙扣", "马克杯",
+    "抱枕", "文具", "贴纸", "手机壳", "T恤", "积木", "扭蛋", "兑换",
+)
+
+# 早餐专供品关键词 —— 午晚餐时段推早餐品不合理。
+# ⚠️ 刻意**不包含咖啡类**：实测「麦咖啡」是独立饮品分类，
+# 全天都合适当饮品，不该被当成早餐品误杀。
+BREAKFAST_ONLY_KEYWORDS: tuple[str, ...] = (
+    "麦满分", "猪柳蛋", "培根蛋", "脆薯饼", "吉士蛋堡",
+    "早安", "开工", "一夜", "营养早餐", "早餐桶",
+)
+
+# 哪些餐次不该出现早餐专供品
+BREAKFAST_SLOTS: tuple[str, ...] = ("lunch", "tea", "dinner")
+
+
+def apply_preference(items: list[MenuItem], profile: TasteProfile,
+                     meal: str = "") -> list[Candidate]:
     """把单品展开成候选，并按偏好加权。
 
-    这里只做**软排序**，不做硬过滤 —— 硬过滤留给营养层和预算层，
+    这里只做**软排序**，硬过滤留给营养层和预算层（除两类例外，见下），
     否则「喜好但不健康」的情况会被过早杀掉。
+
+    ⚠️ meal 参数用于时段错配过滤 —— 官方菜单里「人气热卖」混着早餐品，
+    不加这道过滤会出现「晚饭推荐麦满分」。**不传 meal 则跳过滤**，
+    保证离线 demo 与单测的行为与原版一致。
     """
     cands: list[Candidate] = []
     top = set(profile.top_codes)
+    check_breakfast = meal in BREAKFAST_SLOTS
 
     for item in items:
+        # 例外 1：非食品项硬过滤（推荐徽章/毛绒显然不对）
+        if any(k in item.name for k in NON_FOOD_KEYWORDS):
+            cands.append(Candidate(
+                items=[item], coupon=None, quoted_price=None,
+                nutrition=Nutrition(),
+                rejected_by="偏好：非食品项（联名周边）",
+            ))
+            continue
+
+        # 例外 2：午晚餐时段过滤早餐专供品
+        if check_breakfast and any(k in item.name for k in BREAKFAST_ONLY_KEYWORDS):
+            cands.append(Candidate(
+                items=[item], coupon=None, quoted_price=None,
+                nutrition=Nutrition(),
+                rejected_by=f"偏好：早餐专供品，不适合{meal}时段",
+            ))
+            continue
+
         if any(bad in item.name for bad in profile.disliked_keywords):
             cands.append(Candidate(
                 items=[item], coupon=None, quoted_price=None,
@@ -429,7 +473,8 @@ def prefilter_for_pricing(
 
 def solve(snapshot: Snapshot, profile: TasteProfile, policy: DietaryPolicy,
           price_table: dict[str, Money] | None = None,
-          breakdowns: dict[str, dict] | None = None) -> Decision:
+          breakdowns: dict[str, dict] | None = None,
+          meal: str = "") -> Decision:
     """四层依次求解，返回带解释的决策。
 
     price_table 是 calculate-price 的真实返回（签名 → Money）。
@@ -446,7 +491,7 @@ def solve(snapshot: Snapshot, profile: TasteProfile, policy: DietaryPolicy,
     if not snapshot.menu:
         return Decision(None, [], ["菜单"], notes=["未获取到菜单数据，无法生成建议"])
 
-    cands = apply_preference(snapshot.menu, profile)
+    cands = apply_preference(snapshot.menu, profile, meal)
 
     if snapshot.my_coupons or snapshot.store_coupons:
         cands = enumerate_coupon_combinations(

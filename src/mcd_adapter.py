@@ -587,11 +587,21 @@ class McdMcpClient:
         return self._rpc_id
 
     def _headers(self) -> dict[str, str]:
-        return {
+        """构造请求头。
+
+        ⚠️ `Mcp-Session-Id` **必须在这里判断并加入**，不能在外面补 ——
+        早期版本在 `call_tool` 里写 `self._headers()["Mcp-Session-Id"] = ...`，
+        但本方法每次都返回**全新的 dict**，那次赋值立刻被丢弃，
+        导致服务端下发的 session id 从未真正发出（被外部评审从源码看出来的）。
+        """
+        headers = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
             "Authorization": f"Bearer {self._token}",
         }
+        if self._session_id:
+            headers["Mcp-Session-Id"] = self._session_id
+        return headers
 
     def call_tool(self, name: str, args: dict | None = None) -> dict:
         """调用一个 MCP Tool。Token 失效时抛 TokenExpired，供上层降级。
@@ -613,9 +623,8 @@ class McdMcpClient:
             "params": {"name": name, "arguments": args or {}},
         }
         body = json.dumps(payload).encode()
-        if self._session_id:
-            self._headers()["Mcp-Session-Id"] = self._session_id
-
+        # session id 已在 _headers() 内部处理，这里不再重复拼（曾因拼在
+        # 临时 dict 上而被丢弃，导致 session id 从未发出）
         req = urllib.request.Request(MCP_ENDPOINT, data=body,
                                      headers=self._headers(), method="POST")
         try:
