@@ -1,52 +1,78 @@
 # 麦麦饭点雷达
 
-> **100 个麦当劳 Skill 都在等你开口。只有这一个，每天饭点主动来找你。**
-
-每天 09:00 / 11:00 / 16:30 / 20:00，先跟你说句话，再帮你**领券、算清这顿最省多少、
-盯住快过期的券**，然后发到你邮箱。基于麦当劳官方 MCP，**不猜价格、不代下单、不碰支付**。
-
-> 「今天还没顾上吃饭 —— 不催你，就是想让你知道，现在补一顿比空着撑到明天温柔得多。」
-> 「今天不容易吧。吃顿想热的，剩下的事明天再处理。」
-
 <div align="center">
 <img src="./assets/banner.svg" alt="麦麦饭点雷达 — 每天饭点主动来找你" width="100%">
 
-**↓ 这是它每天发给你的邮件（真实麦当劳 MCP 数据）↓**
+**每天 09:00 / 11:00 / 16:30 / 20:00，它主动来找你 —— 领券、算清这顿最省多少、盯住快过期的券。**
 
-<img src="./assets/shots/email-digest.png" alt="午间建议邮件：推荐餐品、实付金额、营养数据、可叠加的券" width="420">
-<img src="./assets/shots/care-dinner.png" alt="晚间关怀邮件：按时段的温暖提醒 + 推荐与营养数据" width="420">
-<img src="./assets/shots/email-token-expired.png" alt="Token 失效时的降级邮件：主动告知并给出续授权步骤" width="420">
-
-<br>
-
-[![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?style=flat-square&logo=python&logoColor=white)](#快速体验30秒)
-[![deps](https://img.shields.io/badge/dependencies-0-3FB950?style=flat-square)](#快速体验30秒)
-[![Token](https://img.shields.io/badge/Token-不需要-blue?style=flat-square)](#快速体验30秒)
-[![tests](https://img.shields.io/badge/tests-221%20passed-3FB950?style=flat-square)](tests/test_all.py)
+[![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?style=flat-square&logo=python&logoColor=white)](#30-秒试一下)
+[![deps](https://img.shields.io/badge/dependencies-0-3FB950?style=flat-square)](#30-秒试一下)
+[![Token](https://img.shields.io/badge/Token-不需要-blue?style=flat-square)](#30-秒试一下)
+[![tests](https://img.shields.io/badge/tests-233%20passed-3FB950?style=flat-square)](tests/test_all.py)
 [![MCP](https://img.shields.io/badge/MCP-33%20tools%20官方-DA291C?style=flat-square)](https://mcp.mcd.cn)
 [![License](https://img.shields.io/badge/License-MIT-FFC72C?style=flat-square)](./LICENSE)
 
-**👉 [在线预览 6 封真实邮件 + 7 大国家法定节假日主题邮件（无需下载、无需 Token）](https://f-cfan.github.io/mcd-meal-radar/)**
-
-手机点开就能看，不用 clone、不用装环境。
-本地跑也行：**`python demo.py`** — 零依赖 · 不用申请 Token · 不联网 · 30 秒看到同样这些效果
+**👉 [在线预览 6 封真实邮件 + 7 大国家法定节假日主题（手机点开即看，无需下载 / Token）](https://f-cfan.github.io/mcd-meal-radar/)**
 
 </div>
 
 ---
 
-## 为什么做了在线预览
+## 三句话说清它和别的 Skill 有什么不一样
 
-这个比赛**只按 GitHub Star 排名**。评委和路人大多是用手机点开链接、
-快速划一眼就走 —— 不会真的 clone 仓库再跑一遍。
+**① 别的都等你问，它等你开口之前就发邮件了。**
+定时任务在跑，你不用打开任何 App。09:00 / 11:00 / 16:30 / 20:00 四档，
+按官方营业时段给不同的问候 —— 不是「早上好，该吃饭了」那种机械推送。
 
-所以与其让人「相信 README 里的截图」，不如直接把邮件效果做成**能点开的网页**。
-预览站由 CI 自动构建（`.github/workflows/tests.yml` 的 `preview` 作业），
-每次 push 都会重新生成，永远不会和代码脱节。
+**② 价格只有一个来源：`calculate-price` 的真实返回。**
+不算、不估、不用菜单标价凑。官方核不出来就写「未核价」，
+而且**未核价的候选根本不进推荐位** —— 给你一个无法执行的推荐，价值是零。
+
+**③ 定时任务一定会遇到 Token 过期，它会主动告诉你。**
+一次性 Skill 跑完就结束，天然遇不到。定时任务第 3 天就会静默死掉。
+本项目把「服务坏了」做成了一封写着续授权步骤的邮件。
+
+<div align="center">
+
+**↓ 这是它每天发给你的邮件（全部来自真实麦当劳 MCP 数据）↓**
+
+<img src="./assets/shots/demo_digest.png" alt="午间建议邮件：推荐餐品、实付金额、营养数据、可叠加的券" width="330">
+<img src="./assets/shots/care-dinner.png" alt="晚间关怀邮件：按时段的温暖提醒 + 推荐与营养数据" width="330">
+<img src="./assets/shots/demo_token_expired.png" alt="Token 失效时的降级邮件：主动告知并给出续授权步骤" width="330">
+
+<br>
+<sub>不猜价格 · 不代下单 · 不碰支付 · 推荐归推荐，下单权在你</sub>
+
+</div>
+
+---
+
+## 它凭什么值得你点这个 Star
+
+| | |
+|---|---|
+| **能跑，不是 PPT** | `python demo.py` 零依赖、不联网、30 秒跑通五条链路。**233 个单测**在 5 个 CI 环境组合（macOS/Ubuntu × Python 3.9/3.11/3.12）全绿 |
+| **数据是真的** | `fixtures/` 里 **21 份真实 MCP 响应录制**（9 份真实调用 + 12 份文档样本），标注到每份的来源与录制时间 |
+| **踩坑是实测的** | 官方文档没写的 **10 个坑**全部真实复现并记录在 [`MCP_INTEGRATION.md`](./MCP_INTEGRATION.md)。最阴的一个：`beType` 漏传时官方不回「缺少参数」，而是回一句枚举说明 —— 和「商品售罄」的响应几乎一样，**无法靠响应内容区分**<br><br>📖 **做 MCP 的话看这篇 → [麦当劳 MCP 实测踩坑全记录（10 个）](./docs/MCD_PITFALLS.md)** |
+| **约束是硬的** | 热量 / 钠 / 预算三重上限按官方营养表算。超标时不抬阈值迁就商品，而是给可执行建议：「把可乐中杯换成无糖可口可乐中杯，少 147 kcal」 |
+| **省心到底** | 定时任务 + Token 失效降级 + 口味轮换防复读 + 7 大国家法定节假日主题 |
+
+<p align="center">
+  <sub>MIT 协议 · 欢迎 star 和提 issue · 你大概率也会踩到第 7 条</sub>
+</p>
 
 ---
 
 ## 30 秒试一下
+
+```bash
+git clone https://github.com/f-cfan/mcd-meal-radar.git
+cd mcd-meal-radar
+python demo.py           # 零依赖 · 不用申请 Token · 不联网 · 看到上面每一张图
+python tests/test_all.py # 233 个单测，0.4 秒
+```
+
+跑完打开 `out/demo_digest.html`，就是你收到的邮件原文。
 
 ```bash
 git clone https://github.com/f-cfan/mcd-meal-radar.git
@@ -58,7 +84,7 @@ python demo.py
 **真实 MCP 响应录制**，跑通五条链路：午间推荐 / 券过期提醒 / Token 失效降级 / 单位陷阱 / 中国国家法定节假日主题。
 
 ```bash
-python tests/test_all.py     # 221 个单测
+python tests/test_all.py     # 233 个单测
 ```
 
 ---
@@ -113,7 +139,7 @@ python demo.py
 | Token 失效邮件 | [`docs/samples/sample-email-token-expired.html`](docs/samples/sample-email-token-expired.html) |
 
 ```bash
-# 跑单测（221 个，覆盖单位换算 / 场景矩阵 / 字段缺失 / 双通道 / 画像推导 / 法定节假日 / 文档一致性）
+# 跑单测（233 个，覆盖单位换算 / 场景矩阵 / 字段缺失 / 双通道 / 画像推导 / 法定节假日 / 文档一致性）
 python tests/test_all.py
 ```
 
@@ -206,7 +232,7 @@ python tests/test_all.py
 | 真实营养 | ✅ **158 项**标准单品营养 |
 | 真实活动 | ✅ **16 个**进行中/未来活动 |
 | 真实积分 | ✅ `availablePoint` 读取成功 |
-| 单测 | **221 passed** |
+| 单测 | **233 passed** |
 
 **推荐结果为真实数据**：
 
@@ -233,12 +259,16 @@ python tests/test_all.py
 | F | 实付含配送与打包费 | 只看商品价会让用户以为算错 |
 | G | 漏传 `beType` 官方回**枚举取值说明** | 与「商品售罄」响应几乎一样，无法靠响应区分 |
 | H | `query-store-coupons` 的 `products` 是**券的适用商品范围** | 忽略它会推荐用户**用不了**的券 |
-| I | 同一编码在菜单与详情里名称可能不同 | 会把菠萝派营养挂到无糖可乐上（221 vs 0 kcal） |
+| I | 同一编码在菜单与详情里名称可能不同 | 会把菠萝派营养挂到无糖可乐上（233 vs 0 kcal） |
 | J | 名称归一化若丢掉规格 | 可乐小/中/大杯共用一份营养（实测 107/147/224 kcal） |
 
 其中 **E 和 G 最危险** —— API 返回成功但数据是空的，静默失败不易察觉；
 而 G 更阴：官方对「参数缺失」和「商品售罄」的响应几乎一样，
 **只能靠入参是否完整预判**，无法事后补救。
+
+📖 **完整版（含每个坑的原始响应 + 可直接用的防御代码）在
+[docs/MCD_PITFALLS.md](./docs/MCD_PITFALLS.md)** —— 那篇是写给
+「正在对接 MCP 的人」的，可以独立传播。
 
 本项目的两道防线：
 
@@ -262,7 +292,7 @@ python tests/test_all.py
 只做 ① 的话，已核价候选不足 3 个时，未核价仍会填进备选位。
 
 现在即使全部候选都核不到价，也只回退展示并明确告知「金额未核实」，
-不会给出一堆「未核价」的伪推荐。221 个单测锁死这套行为。
+不会给出一堆「未核价」的伪推荐。233 个单测锁死这套行为。
 
 ### 外部评审的采纳与拒绝（2026-10-16 Gemini 二轮）
 
@@ -567,7 +597,7 @@ mcd-meal-radar/
 │   ├── mailer.py            # 邮件渲染（HTML + 纯文本 + 节日背景渲染）
 │   └── mail.py              # 双通道推送（Agent Mail 优先 / SMTP 备选）
 ├── fixtures/                # 21 份响应样本（9 份真实调用录制 + 12 份文档结构样本）
-├── tests/test_all.py        # 221 个单测
+├── tests/test_all.py        # 233 个单测
 ├── assets/
 │   ├── festivals/           # 7 大中国国家法定节假日专属插画背景素材库与 manifest.json
 │   └── shots/               # 邮件渲染首屏预览图

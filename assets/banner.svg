@@ -12,23 +12,37 @@
   <line x1="70" y1="178" x2="560" y2="178" stroke="#5dcaa5" stroke-width="1" opacity="0.5"/>
 
   <text x="70" y="214" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif"
-        font-size="21" font-weight="400" fill="#e1f5ee">定时优惠提醒 · 四层约束求解 · 真实核价</text>
+        font-size="21" font-weight="400" fill="#e1f5ee">09:00 · 11:00 · 16:30 · 20:00 定时来找你</text>
 
-  <g transform="translate(640, 78)">
-    <rect x="0" y="0" width="250" height="144" rx="12" fill="#ffffff" opacity="0.95"/>
-    <text x="20" y="32" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif"
-          font-size="15" font-weight="700" fill="#a32d2d">⚠ 有 2 张券即将过期</text>
-    <text x="20" y="62" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif"
-          font-size="13" fill="#5f5e5a">无糖饮品立减4.5元券</text>
-    <text x="20" y="84" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif"
-          font-size="12" fill="#a32d2d">今天到期</text>
-    <line x1="20" y1="98" x2="230" y2="98" stroke="#e5e3de" stroke-width="1"/>
-    <text x="20" y="122" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif"
-          font-size="13" font-weight="700" fill="#1f1f1e">麦辣鸡腿汉堡三件套</text>
-    <text x="230" y="122" text-anchor="end" font-family="-apple-system,BlinkMacSystemFont,sans-serif"
-          font-size="15" font-weight="700" fill="#0f6e56">¥33.50</text>
+  <g transform="translate(640, 66)">
+    <rect x="0" y="0" width="262" height="168" rx="12" fill="#ffffff" opacity="0.96"/>
+
+    <text x="18" y="30" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif"
+          font-size="14" font-weight="700" fill="#a32d2d">3 张券即将过期</text>
+
+    <text x="18" y="56" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif"
+          font-size="12" fill="#5f5e5a">满30减6元券</text>
+    <text x="244" y="56" text-anchor="end" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC',sans-serif"
+          font-size="12" font-weight="700" fill="#a32d2d">今天到期</text>
+
+    <text x="18" y="76" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif"
+          font-size="12" fill="#5f5e5a">无糖饮品立减4.5元券</text>
+    <text x="244" y="76" text-anchor="end" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC',sans-serif"
+          font-size="12" fill="#6b6a66">1 天</text>
+
+    <line x1="18" y1="90" x2="244" y2="90" stroke="#e5e3de" stroke-width="1"/>
+
+    <text x="18" y="112" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC',sans-serif"
+          font-size="11" fill="#6b6a66">建议</text>
+    <text x="18" y="134" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif"
+          font-size="13" font-weight="700" fill="#1f1f1e">麦辣鸡腿汉堡</text>
+    <text x="244" y="134" text-anchor="end" font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+          font-size="16" font-weight="700" fill="#0f6e56">¥22.50</text>
+
+    <text x="18" y="154" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC',sans-serif"
+          font-size="11" fill="#6b6a66">485 kcal · 钠 1208 mg · calculate-price 真实返回</text>
   </g>
 
   <text x="70" y="272" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif"
-        font-size="15" fill="#9fe1cb">基于麦当劳官方 MCP · 参与麦当劳程序员创意开发大赛</text>
+        font-size="15" fill="#9fe1cb">基于麦当劳官方 MCP · 不猜价格 · 不代下单 · 不碰支付</text>
 </svg>

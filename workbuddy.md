@@ -308,7 +308,7 @@ cands = apply_nutrition(cands, ...)
 
 ## 测试覆盖
 
-221 个单测，全部零依赖、零 Token、零网络：
+233 个单测，全部零依赖、零 Token、零网络：
 
 ```
 TestUnitTrap          5 个  单位换算防回归（分 vs 元）
@@ -323,7 +323,7 @@ TestStatutoryFestivals 9 个 中国 7 大国家法定节假日主题与素材库
 ```
 
 ```
-Ran 221 tests in 0.043s
+Ran 233 tests in 0.043s
 OK
 ```
 
@@ -333,7 +333,7 @@ OK
 
 ```bash
 python demo.py            # 五条链路，零 Token
-python tests/test_all.py  # 221 个单测
+python tests/test_all.py  # 233 个单测
 python scheduler.py --fixture --all   # 四档任务，零 Token
 ```
 

@@ -3151,5 +3151,173 @@ class TestCouponExpiryFocusAcrossFestivals(unittest.TestCase):
                              f"{slot.key} 档不应注入过期提醒")
 
 
+class TestReadmeImagesExist(unittest.TestCase):
+    """🔴 README 引用的截图必须存在且是最新的。
+
+    真实事故（2026-10-16）：README 首屏引用 `email-digest.png`，
+    而构建脚本产出的是 `demo_digest.png` —— 两者曾被手工 cp 成不同内容，
+    于是 README 展示的是**修复前**的旧图（券适用范围错配那种）。
+
+    截图与代码脱节比没有截图更糟：它让评审看到已经修好的 bug，
+    而作者以为问题已经解决。这个 bug 我自己也犯过一次
+    （上一次的「未核价」就是靠看示例邮件发现的）。
+    """
+
+    def _readme_refs(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        text = open(os.path.join(root, "README.md"), encoding="utf-8").read()
+        return sorted(set(re.findall(r"assets/shots/([A-Za-z0-9_-]+\.png)", text)))
+
+    def test_readme_references_at_least_one_shot(self):
+        refs = self._readme_refs()
+        self.assertGreaterEqual(len(refs), 3,
+                                f"README 首屏应有多张截图，当前只引用了 {refs}")
+
+    def test_all_referenced_images_exist(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        missing = [r for r in self._readme_refs()
+                   if not os.path.exists(os.path.join(root, "assets", "shots", r))]
+        self.assertEqual(missing, [],
+                         f"README 引用了不存在的截图：{missing}。"
+                         f"多半是构建脚本产出的文件名变了")
+
+    def test_no_duplicate_naming_for_same_page(self):
+        """同一页不该同时存在两套命名的截图（如 X.png 与 email-X.png）。
+
+        重复命名几乎必然导致「README 引用了旧的那套」，
+        因为它们的内容会各自漂移。
+        """
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        d = os.path.join(root, "assets", "shots")
+        if not os.path.isdir(d):
+            self.skipTest("尚未生成截图")
+        names = [f for f in os.listdir(d) if f.endswith(".png")]
+        # email- 前缀那套是历史遗留，已在 2026-10-16 移除
+        legacy = [f for f in names if f.startswith("email-")]
+        self.assertEqual(legacy, [],
+                         f"存在历史遗留的重复命名截图：{legacy}")
+
+    def test_readme_shots_not_stale(self):
+        """README 引用的截图不得比它展示的 HTML 源文件更旧。"""
+        import glob
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        shots_dir = os.path.join(root, "assets", "shots")
+        if not os.path.isdir(shots_dir):
+            self.skipTest("尚未生成截图")
+        htmls = glob.glob(os.path.join(root, "out", "*.html"))
+        if not htmls:
+            self.skipTest("尚未生成邮件 HTML（CI 首次运行属正常）")
+        newest_html = max(os.path.getmtime(h) for h in htmls)
+        stale = []
+        for ref in self._readme_refs():
+            p = os.path.join(shots_dir, ref)
+            if os.path.exists(p) and os.path.getmtime(p) < newest_html:
+                stale.append(ref)
+        # 允许 5 分钟构建窗口内的抖动，避免时间戳精度导致的假阳性
+        self.assertEqual(stale, [],
+                         f"README 截图比邮件 HTML 旧，展示的是修复前效果：{stale}"
+                         f"（请重跑 python scripts/build_preview.py --shots）")
+
+
+class TestPitfallDocExists(unittest.TestCase):
+    """独立踩坑文章是传播钩子，必须真的存在且覆盖全部 10 个坑。"""
+
+    def _doc(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        path = os.path.join(root, "docs", "MCD_PITFALLS.md")
+        self.assertTrue(os.path.exists(path),
+                        "缺少 docs/MCD_PITFALLS.md —— README 里有指向它的链接")
+        return open(path, encoding="utf-8").read()
+
+    def test_doc_covers_ten_pitfalls(self):
+        text = self._doc()
+        headings = re.findall(r"(?m)^##\s+(\d+)\.", text)
+        self.assertEqual(len(headings), 10,
+                         f"应覆盖 10 个坑，实际 {len(headings)} 个：{headings}")
+
+    def test_doc_flags_the_silent_failure_trap(self):
+        """第 7 条（beType 伪装成售罄）是最有价值的坑，必须讲透。"""
+        text = self._doc()
+        self.assertIn("beType", text)
+        self.assertIn("无法靠响应内容区分", text,
+                      "第 7 条的核心是「事后无法区分」，必须点明")
+
+    def test_doc_provides_defensive_code(self):
+        """文章要给可直接用的代码，否则只是抱怨。"""
+        text = self._doc()
+        self.assertGreaterEqual(text.count("```python"), 6,
+                                "多数坑应配可用的防御代码")
+        self.assertIn("SCENES", text, "场景矩阵代码是第 7 条的核心防御")
+
+    def test_readme_links_to_pitfall_doc(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        readme = open(os.path.join(root, "README.md"), encoding="utf-8").read()
+        self.assertIn("docs/MCD_PITFALLS.md", readme,
+                      "README 应挂上踩坑文章入口（首屏 + 踩坑章节各一处）")
+        self.assertGreaterEqual(readme.count("docs/MCD_PITFALLS.md"), 2,
+                                "README 应在两处挂链接，保证路人划到任一处都能看到")
+
+
+class TestBannerMatchesRealData(unittest.TestCase):
+    """🔴 banner 里的数字必须与真实求解结果一致。
+
+    真实教训（2026-10-16）：banner 写「有 2 张券即将过期」+ 三件套 ¥33.50，
+    而那封邮件里 2 是券数不是完整语境、33.50 也不是当次推荐 ——
+    首屏视觉与真实效果对不上，等于给评审一个错误的印象。
+    """
+
+    def _banner(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        return open(os.path.join(root, "assets", "banner.svg"),
+                    encoding="utf-8").read()
+
+    def test_banner_shows_a_real_quoted_price(self):
+        """banner 上的金额必须能在真实价格表里找到。"""
+        from collector import load_price_table_from_fixtures
+        table = load_price_table_from_fixtures()
+        prices = {m.yuan for m in table.values()}
+        svg = self._banner()
+        shown = re.findall(r"¥(\d+\.\d{2})", svg)
+        self.assertTrue(shown, "banner 应展示一个金额")
+        for p in shown:
+            self.assertIn(Decimal(p), prices,
+                          f"banner 的 ¥{p} 不在真实 calculate-price 报价表里")
+
+    def test_banner_shows_real_nutrition_numbers(self):
+        """banner 上的营养数字必须能在真实营养表里找到。"""
+        from collector import load_snapshot_from_fixtures
+        snap = load_snapshot_from_fixtures(scene="delivery")
+        kcal = {n.kcal for n in snap.nutrition_by_name.values() if n.kcal}
+        sodium = {n.sodium_mg for n in snap.nutrition_by_name.values()
+                  if n.sodium_mg}
+        svg = self._banner()
+        for m in re.findall(r"(\d+)\s*kcal", svg):
+            self.assertIn(int(m), kcal,
+                          f"banner 的 {m} kcal 不在官方营养表里")
+        for m in re.findall(r"钠\s*(\d+)\s*mg", svg):
+            self.assertIn(int(m), sodium,
+                          f"banner 的钠 {m} mg 不在官方营养表里")
+
+    def test_banner_states_the_three_disciplines(self):
+        """首屏就该把三条纪律说出来 —— 这是本项目的核心卖点。"""
+        svg = self._banner()
+        for kw in ("不猜价格", "不代下单", "不碰支付"):
+            self.assertIn(kw, svg, f"banner 缺少「{kw}」")
+
+    def test_banner_lists_actual_schedule(self):
+        """banner 写的四档时间必须与 scheduler 的实际配置一致。
+
+        ⚠️ 必须用 `hour:minute` 而不是只比小时 ——
+        16:30 档的 `hour` 是 16、`minute` 是 30，
+        只查 "16:00" 会误报（banner 写 16:30 是对的）。
+        """
+        import scheduler as sched
+        svg = self._banner()
+        for slot in sched.SLOTS:
+            stamp = f"{slot.hour:02d}:{slot.minute:02d}"
+            self.assertIn(stamp, svg,
+                          f"banner 缺少实际档位 {slot.key} 的时间 {stamp}")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -284,6 +284,51 @@ def make_shots(pages: list[tuple[str, str, str]]) -> None:
                 print(f"  ✅ {dst.name}（{title}）")
 
 
+def verify_readme_images() -> None:
+    """核对 README 引用的截图**确实存在**。
+
+    ⚠️ 真实事故（2026-10-16）：README 首屏引用 `email-digest.png`，
+    而本脚本产出的是 `demo_digest.png` —— 两者曾被手工 cp 成不同内容，
+    于是 README 展示的是**修复前**的旧图（券适用范围错配那种）。
+    截图与代码脱节比没有截图更糟：它会让评审看到已经修好的 bug。
+
+    这里只做「存在性 + 陈旧性」检查，不自动改名 ——
+    命名是 README 与脚本之间的契约，应显式维护。
+    """
+    readme = ROOT / "README.md"
+    if not readme.exists():
+        return
+    text = readme.read_text(encoding="utf-8")
+    import re as _re
+    refs = sorted(set(_re.findall(r"assets/shots/([A-Za-z0-9_-]+\.png)", text)))
+    if not refs:
+        return
+
+    missing, stale = [], []
+    for ref in refs:
+        p = ROOT / "assets" / "shots" / ref
+        if not p.exists():
+            missing.append(ref)
+            continue
+        # 截图比它所展示的 HTML 源文件旧 = 展示的是修复前效果
+        stem = Path(ref).stem
+        for cand in (ROOT / "out" / f"{stem}.html",
+                     ROOT / "out" / "demo_digest.html",
+                     ROOT / "out" / "demo_token_expired.html"):
+            if cand.exists() and cand.stat().st_mtime > p.stat().st_mtime:
+                stale.append(f"{ref}（比 {cand.name} 旧）")
+                break
+
+    if missing:
+        print(f"  ⚠️ README 引用了不存在的截图：{', '.join(missing)}")
+        print("     → 多半是脚本产出的文件名变了；请改 README 或改 PAGES 配置")
+    if stale:
+        print(f"  ⚠️ README 截图已陈旧：{'; '.join(stale)}")
+        print("     → 请重跑 python scripts/build_preview.py --shots")
+    if not missing and not stale:
+        print(f"  ✅ README 引用的 {len(refs)} 张截图均为最新")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="构建麦麦饭点雷达在线预览")
     ap.add_argument("--index", action="store_true", help="生成预览首页")
@@ -303,6 +348,8 @@ def main() -> int:
     if args.shots:
         print("▸ 渲染截图…")
         make_shots(pages)
+
+    verify_readme_images()
 
     print(f"✅ 预览就绪：{(OUT / 'index.html')}")
     return 0
