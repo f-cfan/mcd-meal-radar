@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 import unittest
 from decimal import Decimal
@@ -282,26 +283,97 @@ class TestPolicyNormalize(unittest.TestCase):
 
 
 class TestNoOrderingTools(unittest.TestCase):
-    """纪律测试：本项目不得调用任何下单类工具。"""
+    """纪律测试：本项目不得调用任何下单类/消耗资源类工具。
 
-    def test_ordering_tools_not_in_source(self):
-        """源码中不得出现下单类工具的调用（允许出现在文档字符串的边界说明里）。"""
-        src_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src")
-        forbidden = ('"create-order"', "'create-order'", 'call_tool("create-order"')
-        for fname in os.listdir(src_dir):
-            if not fname.endswith(".py"):
-                continue
-            path = os.path.join(src_dir, fname)
+    ⚠️ 早期版本这个测试名不副实 —— docstring 声称防住 5 类工具，
+    实际只检查了 create-order 一个。对一个以「诚实」为卖点的项目，
+    「宣称」与「实测」不符比没有测试更伤。这是被外部评审挑出来的。
+
+    现在覆盖官方全部会改变账户状态或消耗资源的工具。
+    """
+
+    # 会创建订单、消耗积分、占用名额或领取优惠券的工具
+    FORBIDDEN = (
+        "create-order",
+        "cancel-order",
+        "mall-create-order",
+        "party-order-create",
+        "draw-lottery",
+    )
+
+    # 唯一允许调用的写操作工具，且只能出现在 collector 的领券分支里
+    ALLOWED_WRITE = ("auto-bind-coupons",)
+
+    def _source_files(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        for name in sorted(os.listdir(os.path.join(root, "src"))):
+            if name.endswith(".py"):
+                yield name, os.path.join(root, "src", name)
+
+    def test_no_ordering_tools_anywhere(self):
+        """src/ 下不得出现下单类工具的调用。"""
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        also_root = os.path.join(root, "scheduler.py")
+        targets = [p for _, p in self._source_files()]
+        targets.append(also_root)
+
+        for path in targets:
             with open(path, encoding="utf-8") as fh:
                 for lineno, line in enumerate(fh, 1):
                     code = line.split("#")[0]
-                    for token in forbidden:
-                        self.assertNotIn(token, code,
-                                         f"{fname}:{lineno} 出现下单工具调用")
+                    # 排除 docstring 里的边界说明：只查 call_tool 调用形式
+                    for tool in self.FORBIDDEN:
+                        self.assertNotIn(
+                            f'call_tool("{tool}"', code,
+                            f"{os.path.basename(path)}:{lineno} 调用了下单工具 {tool}")
+                        self.assertNotIn(
+                            f"call_tool('{tool}'", code,
+                            f"{os.path.basename(path)}:{lineno} 调用了下单工具 {tool}")
 
+    def test_only_one_write_tool_used(self):
+        """全项目只允许 auto-bind-coupons 一个改变账户状态的调用。"""
+        import re
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        used = set()
+        for _, path in self._source_files():
+            with open(path, encoding="utf-8") as fh:
+                text = fh.read()
+            for m in re.finditer(r'call_tool\(\s*[\'"]([a-z0-9-]+)[\'"]', text):
+                used.add(m.group(1))
 
+        write_tools = used & set(self.FORBIDDEN) | (used & set(self.ALLOWED_WRITE))
+        illegal = write_tools - set(self.ALLOWED_WRITE)
+        self.assertEqual(
+            illegal, set(),
+            f"发现未授权的写操作调用：{illegal}（唯一允许的是 auto-bind-coupons）")
 
+    def test_auto_claim_is_isolated_in_collector(self):
+        """auto-bind-coupons 只能出现在 collector 的领券分支，物理隔离便于审计。"""
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        for name, path in self._source_files():
+            if name == "collector.py":
+                continue
+            with open(path, encoding="utf-8") as fh:
+                text = fh.read()
+            self.assertNotIn(
+                "auto-bind-coupons", text,
+                f"{name} 不应出现 auto-bind-coupons（该调用须隔离在 collector）")
 
+    def test_readme_states_the_boundary_honestly(self):
+        """README 宣称的工具数量必须与测试实际覆盖的一致。
+
+        防回归：改了 README 里的数字却没改测试，或反之。
+        """
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, "README.md"), encoding="utf-8") as fh:
+            readme = fh.read()
+        # README 必须列出全部 5 类下单工具，与本测试的 FORBIDDEN 对齐
+        for tool in self.FORBIDDEN:
+            self.assertIn(tool, readme,
+                          f"README 的安全边界声明需列出 {tool}，与测试保持一致")
+        # 数字一致性由 TestDocConsistency 精确校验，这里只确认存在
+        self.assertRegex(readme, r"\d+ passed",
+                         "README 应标注单测数量")
 
 
 class TestPushChannels(unittest.TestCase):
@@ -675,6 +747,188 @@ class TestProfileResolution(unittest.TestCase):
         manual = TasteProfile(disliked_keywords=("辣椒",))
         prof = scheduler.resolve_profile(FakeSnap(), manual)
         self.assertIn("辣椒", prof.disliked_keywords)
+
+
+class TestCouponEnumeration(unittest.TestCase):
+    """券组合枚举 —— 曾有「or 短路 + 任意取前 2 张」的缺陷。"""
+
+    def _item(self):
+        from mcd_adapter import MenuItem
+        from decimal import Decimal as D
+        return MenuItem("A", "巨无霸", "汉堡", ("人气",), D("39"), D("39"))
+
+    def _coupon(self, cid, value=None, days=None):
+        from mcd_adapter import Coupon, Money
+        return Coupon(cid, cid, Money(Decimal(value)) if value else None, None, days)
+
+    def test_merges_store_and_card_coupons(self):
+        """有门店券时也不能丢掉卡包券（早期版本 or 短路会全丢）。"""
+        from solver import enumerate_coupon_combinations, Candidate, Nutrition
+        cands = [Candidate(items=[self._item()], coupon=None,
+                           quoted_price=None, nutrition=Nutrition())]
+        store = [self._coupon("S1", "500", 3)]
+        card = [self._coupon("C1", "800", 1)]
+        out = enumerate_coupon_combinations(cands, card, store, max_pairs=2)
+        used = {c.coupon.coupon_id for c in out if c.coupon}
+        self.assertEqual(used, {"S1", "C1"}, "门店券与卡包券都应进入候选")
+
+    def test_prioritizes_expiring_coupon(self):
+        """快过期的券应优先，而非按列表顺序。"""
+        from solver import enumerate_coupon_combinations, Candidate, Nutrition
+        cands = [Candidate(items=[self._item()], coupon=None,
+                           quoted_price=None, nutrition=Nutrition())]
+        # 先给 5 天后才过期的大额券，后给 1 天后过期的小额券
+        store = [self._coupon("FAR", "2000", 5), self._coupon("SOON", "300", 1)]
+        out = enumerate_coupon_combinations(cands, [], store, max_pairs=1)
+        picked = [c.coupon.coupon_id for c in out if c.coupon]
+        self.assertEqual(picked, ["SOON"], "1 天后过期的券应优先")
+
+    def test_unknown_value_sorts_last(self):
+        """面值未知的券不应抢在有面值的券前面。"""
+        from solver import enumerate_coupon_combinations, Candidate, Nutrition
+        cands = [Candidate(items=[self._item()], coupon=None,
+                           quoted_price=None, nutrition=Nutrition())]
+        store = [self._coupon("UNKNOWN", None, 3), self._coupon("KNOWN", "500", 3)]
+        out = enumerate_coupon_combinations(cands, [], store, max_pairs=1)
+        picked = [c.coupon.coupon_id for c in out if c.coupon]
+        self.assertEqual(picked, ["KNOWN"])
+
+    def test_expired_card_coupon_excluded(self):
+        """卡包券里已过期（>7天）的券不参与，避免浪费候选位。"""
+        from solver import enumerate_coupon_combinations, Candidate, Nutrition
+        cands = [Candidate(items=[self._item()], coupon=None,
+                           quoted_price=None, nutrition=Nutrition())]
+        card = [self._coupon("OLD", "900", 30)]
+        out = enumerate_coupon_combinations(cands, card, [], max_pairs=2)
+        self.assertEqual([c for c in out if c.coupon], [],
+                         "30 天后才过期的卡包券不该占候选位")
+
+
+class TestArchitectureIntegrity(unittest.TestCase):
+    """架构纪律：依赖方向必须是单向的（collector → solver）。"""
+
+    def test_no_module_level_mutable_global(self):
+        """禁止用模块级可变全局跨模块传状态（早期 LAST_BREAKDOWNS 的问题）。"""
+        import ast
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        offenders = []
+        for name in os.listdir(os.path.join(root, "src")):
+            if not name.endswith(".py"):
+                continue
+            path = os.path.join(root, "src", name)
+            tree = ast.parse(open(path, encoding="utf-8").read())
+            for node in tree.body:
+                if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                    tgt = node.target.id
+                    if tgt.isupper() and node.value is not None:
+                        # 允许不可变常量（CST / SCENES 等），禁止 dict/list 容器
+                        if isinstance(node.value, (ast.Dict, ast.List, ast.Set)):
+                            offenders.append(f"{name}:{node.lineno} {tgt}")
+        self.assertEqual(offenders, [],
+                         f"发现模块级可变全局：{offenders}（应用显式传参）")
+
+    def test_solver_does_not_import_collector(self):
+        """solver 不应反向依赖 collector。
+
+        用 AST 判断而非字符串匹配 —— docstring 里出现「collector」是正常说明文字，
+        早期版本用 `assertNotIn("import collector", src)` 会误报。
+        """
+        import ast
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        tree = ast.parse(open(os.path.join(root, "src", "solver.py"),
+                              encoding="utf-8").read())
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    imported.add(alias.name.split(".")[0])
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported.add(node.module.split(".")[0])
+        self.assertNotIn("collector", imported,
+                         "solver 反向依赖 collector，依赖方向错误（应单向 collector → solver）")
+        self.assertIn("mcd_adapter", imported,
+                      "solver 应只依赖 mcd_adapter 等底层模块")
+
+
+class TestDocConsistency(unittest.TestCase):
+    """文档与代码的一致性 —— 防止 README 里的数字再次漂移。
+
+    TRAE 评审发现 README 同时写着 23 / 33 / 52 而实际是 63。
+    对一个以「诚实、不编造数字」为卖点的项目，这是最伤的自伤 ——
+    所以用测试把数字锁死，而不是靠人记得改。
+    """
+
+    def _count_tests(self):
+        """用 AST 静态统计真实用例数（不执行测试，避免递归）。"""
+        import ast
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        tree = ast.parse(open(os.path.join(root, "tests", "test_all.py"),
+                              encoding="utf-8").read())
+        count = 0
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                for sub in node.body:
+                    if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        if sub.name.startswith("test_"):
+                            count += 1
+        return count
+
+    def _read(self, *parts):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, *parts), encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_readme_test_count_matches_reality(self):
+        """README 里出现的测试数字必须等于真实用例数。"""
+        real = self._count_tests()
+        readme = self._read("README.md")
+        # 提取所有 badge/正文里的「N passed」和「N 个单测」
+        nums = set()
+        for m in re.finditer(r"tests-(\d+)%20passed", readme):
+            nums.add(int(m.group(1)))
+        for m in re.finditer(r"(\d+) passed", readme):
+            nums.add(int(m.group(1)))
+        for m in re.finditer(r"(\d+) 个单测", readme):
+            nums.add(int(m.group(1)))
+        for m in re.finditer(r"# (\d+) 个单测", readme):
+            nums.add(int(m.group(1)))
+        self.assertTrue(nums, "README 应包含测试数量")
+        for n in nums:
+            self.assertEqual(n, real,
+                             f"README 写 {n}，实际 {real} 个用例 —— 数字必须一致")
+
+    def test_checklist_test_count_matches_reality(self):
+        real = self._count_tests()
+        checklist = self._read("docs", "SUBMIT_CHECKLIST.md")
+        for m in re.finditer(r"Ran (\d+) tests", checklist):
+            self.assertEqual(int(m.group(1)), real,
+                             f"清单写 {m.group(1)}，实际 {real}")
+        for m in re.finditer(r"\*\*(\d+) passed\*\*", checklist):
+            self.assertEqual(int(m.group(1)), real,
+                             f"清单写 {m.group(1)}，实际 {real}")
+
+    def test_readme_has_visual_hook(self):
+        """首屏必须有邮件截图 —— 纯文字的项目在 Star 竞赛里没竞争力。"""
+        readme = self._read("README.md")
+        self.assertIn("assets/shots/", readme,
+                      "README 首屏需嵌入邮件截图（视觉钩子）")
+
+    def test_no_personal_email_in_public_docs(self):
+        """公开文档不得出现真实邮箱 —— 与「不暴露隐私」的宣称一致。"""
+        import glob
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        # 排除 xxx@ 这种占位符形式
+        pattern = re.compile(r"(?<!xxx)[\w.+-]{4,}@\w+\.qq\.com")
+        offenders = []
+        for rel in ["README.md", "MCP_INTEGRATION.md", "workbuddy.md"]:
+            text = self._read(*rel.split("/"))
+            for m in pattern.finditer(text):
+                offenders.append(f"{rel}: {m.group(0)}")
+        for path in glob.glob(os.path.join(root, "docs", "*.md")):
+            with open(path, encoding="utf-8") as fh:
+                for m in pattern.finditer(fh.read()):
+                    offenders.append(f"{os.path.basename(path)}: {m.group(0)}")
+        self.assertEqual(offenders, [], f"公开文档含真实邮箱：{offenders}")
 
 
 if __name__ == "__main__":

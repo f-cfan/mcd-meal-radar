@@ -1,23 +1,47 @@
-# 麦麦饭点雷达 · mcd-meal-radar
+# 麦麦饭点雷达
 
-> **每天饭点主动来找你。**
+> **100 个麦当劳 Skill 都在等你开口。只有这一个，每天饭点主动来找你。**
 
-基于麦当劳官方 MCP 的定时优惠与营养搭配提醒助手。
+每天 09:00 / 11:00 / 16:30 / 20:00，自动帮你**领券、算清这顿最省多少、盯住快过期的券**，
+然后发到你邮箱。基于麦当劳官方 MCP，**不猜价格、不代下单、不碰支付**。
 
 <div align="center">
-
 <img src="./assets/banner.svg" alt="麦麦饭点雷达 — 每天饭点主动来找你" width="100%">
+
+**↓ 这是它每天发给你的邮件（真实麦当劳 MCP 数据）↓**
+
+<img src="./assets/shots/email-digest.png" alt="午间建议邮件：推荐餐品、实付金额、营养数据、可叠加的券" width="420">
+<img src="./assets/shots/email-token-expired.png" alt="Token 失效时的降级邮件：主动告知并给出续授权步骤" width="420">
 
 <br>
 
-[![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?style=flat-square&logo=python&logoColor=white)](#快速体验)
-[![deps](https://img.shields.io/badge/dependencies-0-3FB950?style=flat-square)](#快速体验)
-[![Token](https://img.shields.io/badge/Token-不需要-blue?style=flat-square)](#快速体验)
-[![tests](https://img.shields.io/badge/tests-23%20passed-3FB950?style=flat-square)](tests/test_all.py)
+[![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?style=flat-square&logo=python&logoColor=white)](#快速体验30秒)
+[![deps](https://img.shields.io/badge/dependencies-0-3FB950?style=flat-square)](#快速体验30秒)
+[![Token](https://img.shields.io/badge/Token-不需要-blue?style=flat-square)](#快速体验30秒)
+[![tests](https://img.shields.io/badge/tests-76%20passed-3FB950?style=flat-square)](tests/test_all.py)
+[![MCP](https://img.shields.io/badge/MCP-33%20tools%20官方-DA291C?style=flat-square)](https://mcp.mcd.cn)
 [![License](https://img.shields.io/badge/License-MIT-FFC72C?style=flat-square)](./LICENSE)
-[![MCP](https://img.shields.io/badge/MCP-mcp.mcd.cn-DA291C?style=flat-square)](https://mcp.mcd.cn)
+
+**`python demo.py`** — 零依赖 · 不用申请 Token · 不联网 · 30 秒看到上面这些效果
 
 </div>
+
+---
+
+## 30 秒试一下
+
+```bash
+git clone https://github.com/f-cfan/mcd-meal-radar.git
+cd mcd-meal-radar
+python demo.py
+```
+
+不需要 MCP Token，不装任何第三方库，也不联网 —— `fixtures/` 里存着 17 份
+**真实 MCP 响应录制**，跑通四条链路：午间推荐 / 券过期提醒 / Token 失效降级 / 单位陷阱。
+
+```bash
+python tests/test_all.py     # 76 个单测
+```
 
 ---
 
@@ -50,7 +74,7 @@ python demo.py
 
 **零第三方依赖 · 不需要 MCP Token · 不联网。**
 
-`fixtures/` 中存放 12 份录制的真实 MCP 响应，`demo.py` 读取它们跑通四条链路：
+`fixtures/` 中存放 18 份响应样本（其中 5 份是 2026-10-15 真实调用录制），`demo.py` 读取它们跑通四条链路：
 
 ```
 链路 A  午间推荐      → 四层约束求解，输出可解释建议
@@ -69,7 +93,7 @@ python demo.py
 | Token 失效邮件 | [`docs/samples/sample-email-token-expired.html`](docs/samples/sample-email-token-expired.html) |
 
 ```bash
-# 跑单测（23 个，覆盖单位换算 / 场景矩阵 / 字段缺失）
+# 跑单测（76 个，覆盖单位换算 / 场景矩阵 / 字段缺失 / 双通道 / 画像推导 / 文档一致性）
 python tests/test_all.py
 ```
 
@@ -162,7 +186,7 @@ python tests/test_all.py
 | 真实营养 | ✅ **158 项**标准单品营养 |
 | 真实活动 | ✅ **16 个**进行中/未来活动 |
 | 真实积分 | ✅ `availablePoint` 读取成功 |
-| 单测 | **33 passed** |
+| 单测 | **76 passed** |
 
 **推荐结果为真实数据**：
 
@@ -289,11 +313,11 @@ WorkBuddy 已内置 Agent Mail 能力（首页「更多 → 我的邮箱」启�
 | | Agent Mail | 自建 SMTP |
 |---|---|---|
 | 需要授权码 | ❌ 不用 | ✅ 需要 16 位短信验证 |
-| 发件地址 | 专属地址 `xxx@agent.qq.com`，与个人邮箱隔离 | 用你自己的邮箱，需给程序授权码 |
+| 发件地址 | 专属地址（`agent.qq.com` 域下），与个人邮箱隔离 | 用你自己的邮箱，需给程序授权码 |
 | 适配 Agent | 官方一等公民 | 自己处理发信逻辑 |
 | 额度 | 每地址 1GB、每天 50 封 | 取决于邮箱设置 |
 
-**隐私设计**：发件人始终是 Agent 专属地址 `chaofan2004@agent.qq.com`，
+**隐私设计**：发件人始终是 Agent 专属地址（`agent.qq.com` 域下的独立地址），
 与你本人的私人邮箱无关 —— 既不暴露私人地址，也不用把邮箱授权码交给任何第三方程序。
 收件人可以是你自己的任意邮箱。
 
@@ -426,8 +450,8 @@ mcd-meal-radar/
 │   ├── solver.py            # 四层约束求解引擎
 │   ├── mailer.py            # 邮件渲染（HTML + 纯文本）
 │   └── mail.py              # 双通道推送（Agent Mail 优先 / SMTP 备选）
-├── fixtures/                # 12 份录制的真实 MCP 响应
-├── tests/test_all.py        # 23 个单测
+├── fixtures/                # 18 份响应样本（5 份真实调用录制）
+├── tests/test_all.py        # 76 个单测
 ├── assets/                  # Banner、架构图
 ├── docs/                    # 部署与提交清单
 ├── MCP_INTEGRATION.md       # MCP 集成说明与实测踩坑记录

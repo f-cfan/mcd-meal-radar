@@ -50,7 +50,7 @@ shasum -a 256 CONTEST_DECLARATION.md
 
 ```bash
 python demo.py            # 应输出四条链路且无异常
-python tests/test_all.py  # 应输出 Ran 52 tests ... OK
+python tests/test_all.py  # 应输出 Ran 76 tests ... OK
 python scheduler.py --fixture --all    # 四档离线任务
 python scheduler.py --live --now lunch --send   # 真实链路 + 真实发送
 ```
@@ -60,7 +60,7 @@ python scheduler.py --live --now lunch --send   # 真实链路 + 真实发送
 | 项 | 结果 |
 |---|---|
 | demo.py 四条链路 | ✅ 全通（零依赖、零 Token、不联网） |
-| 单元测试 | ✅ **52 passed** |
+| 单元测试 | ✅ **76 passed** |
 | 真实 MCP 链路 | ✅ 门店 / 菜单 77 项 / 计价 / 营养 / 活动 / 积分 |
 | Agent Mail 发送 | ✅ 实发成功，收件箱可确认 |
 | Token 安全 | ✅ 仅在 `.env`，仓库无泄露 |
@@ -68,7 +68,7 @@ python scheduler.py --live --now lunch --send   # 真实链路 + 真实发送
 
 ### 真实发送验证记录
 
-- Agent Mail 地址：`chaofan2004@agent.qq.com`
+- Agent Mail 地址：已授权并可用（具体地址见仓库 Secrets，本文档不记录）
 - 已通过项目自身的 `push()` 完成端到端发送（非手工命令）
 - 额度：每天 50 封 / 每分钟 10 次 → 四档任务（每天 4 封）安全
 
@@ -141,7 +141,7 @@ python scheduler.py --live --now lunch --send   # 真实链路 + 真实发送
 把必然发生的断点做成被设计过的体验，而不是静默失败。
 
 工程实践：demo.py 零依赖、零 Token、不联网，30 秒跑通四条链路；
-23 个单测覆盖单位换算（官方 calculate-price 返回「分」而 query-meals 返回「元」，
+76 个单测覆盖单位换算（官方 calculate-price 返回「分」而 query-meals 返回「元」，
 混用会差 100 倍）、场景参数矩阵、字段缺失语义；CI 在 3 个 Python 版本上跑测试并
 校验参赛声明 SHA256 与官方一致。
 ```
@@ -161,7 +161,7 @@ python scheduler.py --live --now lunch --send   # 真实链路 + 真实发送
 ## 七、获奖后待办
 
 - [ ] 仓库保持 Public（官方会通过 GitHub API 读取文件核验）
-- [ ] 关注邮箱（`546613538@qq.com`）与活动 Issue，接收麦当劳通知
+- [ ] 关注注册邮箱与活动 Issue，接收麦当劳通知
 - [ ] 实物奖品：11-14 前提供中国大陆收货信息
 - [ ] 电子兑换券：11-14 前提供实名手机号（须与麦当劳会员注册手机号一致）
 - [ ] WorkBuddy 积分：11-14 前按邮件链路兑换（同一账号仅限 1 份）

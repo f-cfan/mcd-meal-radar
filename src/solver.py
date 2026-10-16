@@ -175,10 +175,22 @@ def enumerate_coupon_combinations(
     券面价值（value）为 None 时不做金额预估，只标注「券面价值待核」。
     """
     store_ids = {c.coupon_id for c in store_coupons}
-    # 门店券优先；卡包券仅在无门店券时作为补充
-    usable = list(store_coupons) or [
-        c for c in my_coupons if c.expires_in_days is None or c.expires_in_days <= 7
-    ]
+
+    # 候选券池：门店券 + 即将过期的卡包券。
+    # ⚠️ 早期版本用 `list(store_coupons) or [...]` 短路 —— 有门店券就完全不看卡包券，
+    # 且取 usable[:2] 是任意前两张，可能漏掉面值更大或更临期的券。
+    # 现在合并两个来源并按「有效期紧迫度 → 面值」排序。
+    card = [c for c in my_coupons
+            if c.coupon_id not in store_ids
+            and (c.expires_in_days is None or c.expires_in_days <= 7)]
+
+    def urgency(c: Coupon) -> tuple:
+        """排序键：快过期的优先；面值大的次之；面值未知的最后。"""
+        days = c.expires_in_days if c.expires_in_days is not None else 9999
+        value = c.value.yuan if c.value is not None else Decimal("-1")
+        return (days, -value, c.coupon_id)
+
+    usable = sorted(store_coupons + card, key=urgency)
 
     expanded: list[Candidate] = []
     for cand in candidates:
@@ -217,6 +229,7 @@ def attach_quoted_prices(
     candidates: list[Candidate],
     price_table: dict[str, Money],
     coupon_price_table: dict[str, Money] | None = None,
+    breakdowns: dict[str, dict] | None = None,
 ) -> list[Candidate]:
     """用 calculate-price 的真实返回给候选定价 —— **枚举与计价严格分离**。
 
@@ -227,6 +240,12 @@ def attach_quoted_prices(
 
     **绝不因为组合不在表里就估算价格** —— 查不到就留 None，
     邮件中显示「未核价」。这是本项目最重要的技术纪律。
+
+    breakdowns 是费用构成（原始「分」值），用于说明外送实付里
+    商品 / 配送 / 打包各占多少。它是**显式参数**而非模块级全局：
+    早期版本让 solver 反向 import collector 的可变全局，职责边界被打破，
+    且 demo/离线场景下常常取不到。改为显式传参后依赖方向是单向的
+    （collector → solver），且离线可用。
     """
     table = dict(price_table)
     if coupon_price_table:
@@ -240,16 +259,12 @@ def attach_quoted_prices(
         if quoted is not None:
             cand.quoted_price = quoted
             # 实测外送场景 price 含配送与打包费，需向用户说明构成
-            try:
-                from collector import LAST_BREAKDOWNS
-                fb = LAST_BREAKDOWNS.get(key)
-                if fb:
-                    cand.fee_breakdown = fb
-                    note = cand.fee_note()
-                    if note:
-                        cand.reasons.append(note)
-            except Exception:
-                pass  # 费用构成是增强信息，取不到不影响主流程
+            fb = (breakdowns or {}).get(key)
+            if fb:
+                cand.fee_breakdown = fb
+                note = cand.fee_note()
+                if note:
+                    cand.reasons.append(note)
             if cand.coupon is not None:
                 cand.reasons.append("已通过 calculate-price 真实核价")
         else:
@@ -372,7 +387,8 @@ def apply_budget(candidates: list[Candidate], policy: DietaryPolicy) -> list[Can
 
 
 def solve(snapshot: Snapshot, profile: TasteProfile, policy: DietaryPolicy,
-          price_table: dict[str, Money] | None = None) -> Decision:
+          price_table: dict[str, Money] | None = None,
+          breakdowns: dict[str, dict] | None = None) -> Decision:
     """四层依次求解，返回带解释的决策。
 
     price_table 是 calculate-price 的真实返回（签名 → Money）。
@@ -400,7 +416,7 @@ def solve(snapshot: Snapshot, profile: TasteProfile, policy: DietaryPolicy,
 
     # 枚举完成后才定价 —— 顺序不可颠倒
     if price_table:
-        cands = attach_quoted_prices(cands, price_table)
+        cands = attach_quoted_prices(cands, price_table, breakdowns=breakdowns)
     else:
         degraded.append("计价")
         notes.append("未取得 calculate-price 报价，金额未核实")

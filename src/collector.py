@@ -72,11 +72,6 @@ def _pick_address(client: McdMcpClient) -> str | None:
         return addrs[idx].get("addressId")
     return None
 
-# 最近一次 quote_candidates 的费用构成，供 solver 填充候选。
-# 用模块级容器而非返回值扩展，是为了让既有 quote_candidates 签名不变、
-# 不破坏 demo 与单测的调用方式。
-LAST_BREAKDOWNS: dict[str, dict] = {}
-
 
 def _now_cst() -> str:
     return datetime.now(CST).strftime("%Y-%m-%d %H:%M:%S")
@@ -107,7 +102,8 @@ def load_price_table_from_fixtures() -> dict[str, object]:
 def quote_candidates(client: McdMcpClient, store_code: str, scene: str,
                      combos: list[list[tuple[str, int]]],
                      address_id: str | None = None,
-                     be_code: str | None = None) -> dict[str, object]:
+                     be_code: str | None = None
+                     ) -> tuple[dict[str, object], dict[str, dict]]:
     """线上核价：对每个候选组合调用 calculate-price 取真实金额。
 
     **这是本项目唯一的价格来源。** 没有 MCP 返回就没有金额，
@@ -120,6 +116,10 @@ def quote_candidates(client: McdMcpClient, store_code: str, scene: str,
     另外注意：官方 calculate-price 的入参不接 couponId，券的抵扣体现在返回的
     discount 字段里。因此同一个商品组合在有无券时可能对应不同签名，
     这里按传入的组合签名原样记录返回值，不做任何推测。
+
+    返回 (计价表, 费用构成表) —— 两者一起传给 solver，
+    避免用模块级可变全局传递状态（早期版本用 LAST_BREAKDOWNS，
+    导致 solver 反向依赖 collector，职责边界被打破）。
     """
     from mcd_adapter import parse_price, parse_price_breakdown
     from solver import combo_signature
@@ -156,9 +156,7 @@ def quote_candidates(client: McdMcpClient, store_code: str, scene: str,
             continue
         table[key] = parse_price(payload)
         breakdowns[key] = parse_price_breakdown(payload)
-    LAST_BREAKDOWNS.clear()
-    LAST_BREAKDOWNS.update(breakdowns)
-    return table
+    return table, breakdowns
 
 
 def load_snapshot_from_fixtures(scene: str = "delivery") -> Snapshot:

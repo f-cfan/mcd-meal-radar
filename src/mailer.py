@@ -38,7 +38,7 @@ def _e(text: object) -> str:
 
 
 def _fmt_money(m: Money | None) -> str:
-    return "待核价" if m is None else f"¥{m.yuan:.2f}"
+    return "未核价" if m is None else f"¥{m.yuan:.2f}"
 
 
 def _fmt_nutri(n: Nutrition) -> dict[str, str]:
@@ -268,7 +268,7 @@ def render_token_expired(email: str, error_detail: str, cached_summary: str = ""
 def render_plain(decision: Decision, snapshot: Snapshot, slot: str = "午间") -> str:
     """纯文本版。用于终端演示与不支持 HTML 的客户端。"""
     lines: list[str] = []
-    expiring = _expiring_couzens_safe(snapshot)
+    expiring = _expiring_coupons_safe(snapshot)
     if expiring:
         lines.append(f"[!] {len(expiring)} 张券即将过期")
         for c in expiring:
@@ -302,7 +302,7 @@ def render_plain(decision: Decision, snapshot: Snapshot, slot: str = "午间") -
     return "\n".join(lines)
 
 
-def _expiring_couzens_safe(snapshot: Snapshot) -> list[Coupon]:
+def _expiring_coupons_safe(snapshot: Snapshot) -> list[Coupon]:
     return _expiring_coupons(snapshot.store_coupons or snapshot.my_coupons)
 
 

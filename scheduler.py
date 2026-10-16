@@ -141,8 +141,10 @@ def run_slot(
     if token_dead:
         decision: Decision = Decision(None, [], ["实时数据"], ["Token 失效"])
     else:
+        # 画像只解析一次，既用于求解也用于渲染摘要（早期版本重复调用两次）
         profile = resolve_profile(snap)
         decision = solve(snap, profile, load_policy())
+        profile_text = profile_summary(profile, snap.menu)
 
     # 3) 渲染
     if token_dead:
@@ -151,10 +153,7 @@ def run_slot(
         text = "MCP Token 已失效，请到 open.mcd.cn/mcp 重新获取并更新 MCD_MCP_TOKEN。"
     else:
         subject = f"【麦麦饭点雷达】{slot.label}建议 · {datetime.now(CST):%m-%d}"
-        html = render_digest(
-            decision, snap,
-            profile_summary(resolve_profile(snap), snap.menu),
-            slot.label)
+        html = render_digest(decision, snap, profile_text, slot.label)
         text = render_plain(decision, snap, slot.label)
 
     # 4) 落盘（便于离线预览与调试）
