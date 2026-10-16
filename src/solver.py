@@ -104,6 +104,37 @@ class Candidate:
             return ""
         return "实付构成：" + " + ".join(bits) + "（以官方页面为准）"
 
+    def delivery_fee_ratio(self) -> Decimal | None:
+        """配送+打包 占商品价的比例。数据不足时返回 None。
+
+        这个比例是判断「该不该点外送」的关键：
+        实测一份 ¥19.70 的单品外送，配送 ¥6.00 + 打包 ¥1.90，
+        附加成本占商品价的 40% —— 比很多人以为的高得多。
+        """
+        fb = self.fee_breakdown or {}
+        delivery = fb.get("delivery") or 0
+        packing = fb.get("packing") or 0
+        product = fb.get("product")
+        if not product or product <= 0:
+            return None
+        return (Decimal(delivery + packing) / Decimal(product))
+
+    def delivery_fee_warning(self, threshold: Decimal = Decimal("0.30")) -> str:
+        """附加成本占比过高时提示到店自取 —— 纯算术，不是模型估算。
+
+        ⚠️ 纪律：只在**官方 calculate-price 返回的费用构成**基础上算，
+        绝不用菜单标价推算配送费（那是估算）。
+        拿不到费用构成时返回空字符串，不猜。
+        """
+        ratio = self.delivery_fee_ratio()
+        if ratio is None or ratio < threshold:
+            return ""
+        fb = self.fee_breakdown or {}
+        extra = (Decimal((fb.get("delivery") or 0) + (fb.get("packing") or 0))
+                 / Decimal(100))
+        return (f"配送+打包 ¥{extra:.2f} 占商品价 {ratio:.0%} —— "
+                f"到店自取可省这笔，值不值你自己定")
+
 
 @dataclass
 class Decision:
@@ -309,6 +340,10 @@ def attach_quoted_prices(
                 note = cand.fee_note()
                 if note:
                     cand.reasons.append(note)
+                # 附加成本占比过高时给出到店自取提示（纯算术）
+                warn = cand.delivery_fee_warning()
+                if warn:
+                    cand.warnings.append(warn)
             if cand.coupon is not None:
                 cand.reasons.append("已通过 calculate-price 真实核价")
         else:

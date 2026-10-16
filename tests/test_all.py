@@ -1925,5 +1925,98 @@ class TestComboNutritionBreakdown(unittest.TestCase):
         self.assertGreater(alts, 5, "真实数据里替换项应该很多")
 
 
+class TestDeliveryFeeWarning(unittest.TestCase):
+    """配送费占比预警 —— 基于官方费用构成的纯算术。
+
+    动机：实测一份 ¥19.70 的单品外送，配送 ¥6.00 + 打包 ¥1.90，
+    附加成本占商品价 **40%** —— 比大多数人以为的高得多。
+    这个比例是判断「该不该点外送」的关键信息。
+
+    ⚠️ 纪律：只用官方 calculate-price 返回的费用构成，
+    **绝不用菜单标价推算配送费**（那是估算）。
+    """
+
+    def _cand(self, product, delivery, packing):
+        from solver import Candidate, Nutrition
+        from mcd_adapter import MenuItem, Money
+        from decimal import Decimal as D
+        m = Money(D(product) / 100)
+        item = MenuItem("C1", "测试餐品", "套餐", (), m, m)
+        return Candidate(
+            items=[item], coupon=None,
+            quoted_price=Money(D(product + delivery + packing) / 100),
+            nutrition=Nutrition(),
+            fee_breakdown={"product": product, "delivery": delivery,
+                           "packing": packing})
+
+    def test_ratio_computed_from_official_breakdown(self):
+        c = self._cand(3690, 600, 190)
+        self.assertAlmostEqual(float(c.delivery_fee_ratio()), 790 / 3690,
+                               places=3)
+
+    def test_warns_when_ratio_high(self):
+        """¥19.70 单品 + ¥7.90 附加 = 40%，应预警。"""
+        c = self._cand(1970, 600, 190)
+        w = c.delivery_fee_warning()
+        self.assertIn("40%", w)
+        self.assertIn("到店自取", w)
+        self.assertIn("¥7.90", w)
+
+    def test_silent_when_ratio_low(self):
+        """¥36.90 套餐 + ¥7.90 = 21%，低于阈值应保持安静（避免噪音）。"""
+        c = self._cand(3690, 600, 190)
+        self.assertEqual(c.delivery_fee_warning(), "")
+
+    def test_silent_for_pickup(self):
+        """到店自取无配送费，不该预警。"""
+        c = self._cand(3690, 0, 0)
+        self.assertEqual(c.delivery_fee_warning(), "")
+
+    def test_no_breakdown_means_no_guess(self):
+        """🔴 没有费用构成时必须返回空，绝不用标价推算。"""
+        from solver import Candidate, Nutrition
+        from mcd_adapter import MenuItem, Money
+        from decimal import Decimal as D
+        m = Money(D("19.70"))
+        item = MenuItem("C1", "测试", "套餐", (), m, m)
+        c = Candidate(items=[item], coupon=None, quoted_price=Money(D("19.70")),
+                      nutrition=Nutrition())
+        self.assertIsNone(c.delivery_fee_ratio())
+        self.assertEqual(c.delivery_fee_warning(), "",
+                         "无费用构成时不得估算，只能沉默")
+
+    def test_zero_product_does_not_divide_by_zero(self):
+        """商品价为 0 时不能崩（曾是很容易忽略的边界）。"""
+        c = self._cand(0, 600, 190)
+        self.assertIsNone(c.delivery_fee_ratio())
+        self.assertEqual(c.delivery_fee_warning(), "")
+
+    def test_threshold_is_configurable(self):
+        """阈值应可调 —— 不同用户对运费的敏感度不同。"""
+        from decimal import Decimal as D
+        c = self._cand(3690, 600, 190)   # 21%
+        self.assertEqual(c.delivery_fee_warning(threshold=D("0.30")), "")
+        self.assertNotEqual(c.delivery_fee_warning(threshold=D("0.20")), "")
+
+    def test_warning_appears_in_real_solve_pipeline(self):
+        """🔴 集成验证：真实 solve 流程里预警要真的挂到 candidate 上。
+
+        只测方法不够 —— 早期版本就出现过「方法写对了但没接上」的情况。
+        """
+        from solver import (apply_preference, attach_quoted_prices,
+                            combo_signature, TasteProfile, Nutrition)
+        from mcd_adapter import MenuItem, Money
+        from decimal import Decimal as D
+        m = Money(D("19.70"))
+        item = MenuItem("C1", "小食", "小食", (), m, m)
+        cands = apply_preference([item], TasteProfile())
+        key = combo_signature([(item.code, 1)])
+        table = {key: Money(D("27.60"))}
+        bds = {key: {"product": 1970, "delivery": 600, "packing": 190}}
+        out = attach_quoted_prices(cands, table, breakdowns=bds)
+        self.assertTrue(any("到店自取" in w for w in out[0].warnings),
+                        f"真实流程里应出现配送费预警，实际 warnings={out[0].warnings}")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

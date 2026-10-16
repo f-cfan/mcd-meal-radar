@@ -308,7 +308,7 @@ cands = apply_nutrition(cands, ...)
 
 ## 测试覆盖
 
-141 个单测，全部零依赖、零 Token、零网络：
+149 个单测，全部零依赖、零 Token、零网络：
 
 ```
 TestUnitTrap          5 个  单位换算防回归（分 vs 元）
@@ -322,7 +322,7 @@ TestNoOrderingTools   1 个  扫描源码确保无下单调用
 ```
 
 ```
-Ran 141 tests in 0.043s
+Ran 149 tests in 0.043s
 OK
 ```
 
@@ -332,7 +332,7 @@ OK
 
 ```bash
 python demo.py            # 四条链路，零 Token
-python tests/test_all.py  # 141 个单测
+python tests/test_all.py  # 149 个单测
 python scheduler.py --fixture --all   # 四档任务，零 Token
 ```
 
