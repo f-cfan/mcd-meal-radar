@@ -30,7 +30,8 @@ from decimal import Decimal
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
 
 from collector import (  # noqa: E402
-    get_snapshot, plan_quotes, quote_candidates, enrich_combo_nutrition,
+    get_snapshot, load_price_table_from_fixtures, plan_quotes, quote_candidates,
+    enrich_combo_nutrition,
 )
 from festivals import (  # noqa: E402
     DEFAULT_PUBLIC_ASSET_BASE, FestivalSpec, detect_festival,
@@ -47,7 +48,8 @@ from mailer import (  # noqa: E402
 )
 from mcd_adapter import MCPError  # noqa: E402
 from solver import (  # noqa: E402
-    DietaryPolicy, Decision, TasteProfile, load_profile, record_push, solve,
+    DietaryPolicy, Decision, TasteProfile, combo_signature, load_profile,
+    record_push, solve,
 )
 
 CST = timezone(timedelta(hours=8))
@@ -257,6 +259,20 @@ def run_slot(
                     snap.nutrition = merged
                     print(f"  套餐营养补齐 {len(enriched)} 个"
                           f"（{'、'.join(m.name for m in snap.menu if m.code in enriched)}）")
+        elif mode == "fixture" and snap.menu:
+            # ⚠️ fixture 模式也必须加载录制的真实报价。
+            # 早期版本只在 live 模式核价，导致 `--fixture` 生成的四档关怀邮件
+            # 与 7 大节日邮件**全部显示「未核价」**，而 README 首屏截图正是这些图。
+            # 预览与线上不一致 = 预览在骗人，这比没有预览更糟。
+            combos, _picked = plan_quotes(snap, profile, policy,
+                                          top_k=QUOTE_TOP_K, meal=meal_now)
+            price_table = load_price_table_from_fixtures()
+            missing = [combo_signature(c) for c in combos
+                       if combo_signature(c) not in price_table]
+            if missing:
+                # fixture 覆盖率不足要显式告警，不能静默出一封全是未核价的邮件
+                print(f"  ⚠️ fixture 价格表缺 {len(missing)} 个组合："
+                      f"{'、'.join(missing)}（真实 MCP 已按套餐下架，需重新录制）")
 
         # ② 求解（纯本地计算，不发请求）
         decision = solve(snap, profile, policy, price_table, breakdowns,

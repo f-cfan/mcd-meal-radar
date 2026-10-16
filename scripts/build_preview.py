@@ -150,19 +150,28 @@ def copy_festival_assets() -> None:
 
 
 def collect() -> list[tuple[str, str, str]]:
-    """把产物收集到 out/preview/，返回实际存在的页面列表。"""
+    """把产物收集到 out/preview/，返回实际存在的页面列表。
+
+    ⚠️ 必须**优先采用较新**的那个副本，不能无脑先读 out/preview/。
+    真实 bug：`out/preview/` 里存着上一轮的旧 HTML，而 `collect()` 先命中它
+    就直接 return，导致本轮新生成的邮件根本没被拷进去——
+    预览站会一直展示旧版本（曾导致 README 首屏截图仍显示「未核价」，
+    而源码早已修复）。预览在骗人，比没有预览更糟。
+    """
     OUT.mkdir(parents=True, exist_ok=True)
     copy_festival_assets()
     found: list[tuple[str, str, str]] = []
     for fname, title, desc in PAGES + FESTIVAL_PAGES:
-        # 源文件可能直接在 out/ 也可能在 out/preview/
-        for cand in (OUT / fname, ROOT / "out" / fname):
-            if cand.exists():
-                dst = OUT / fname
-                if cand.resolve() != dst.resolve():
-                    dst.write_bytes(cand.read_bytes())
-                found.append((fname, title, desc))
-                break
+        # 同一页可能有两个副本（out/ 与 out/preview/），取**较新**的那个
+        cands = [c for c in (OUT / fname, ROOT / "out" / fname) if c.exists()]
+        if not cands:
+            continue
+        src = max(cands, key=lambda p: p.stat().st_mtime)
+        dst = OUT / fname
+        if src.resolve() != dst.resolve():
+            dst.write_bytes(src.read_bytes())
+            print(f"  ↻ 刷新 {fname}（采用较新副本）")
+        found.append((fname, title, desc))
     return found
 
 

@@ -275,7 +275,25 @@ def enumerate_coupon_combinations(
             continue
         expanded.append(cand)
 
+        cand_codes = {i.code for i in cand.items}
         for coupon in usable[:max_pairs]:
+            # ⚠️ 券的**适用范围**校验（官方 products 字段）。
+            #
+            # 真实 bug（2026-10-16 用户复现「未核价」时顺带发现）：
+            # 早期版本不校验适用范围，于是造出「无糖饮品立减券 + 麦辣鸡腿汉堡」
+            # 这种官方根本不允许的组合。后果有两层：
+            #   ① calculate-price 对该组合核不出价 → 显示「未核价」
+            #   ② 更糟：它排在推荐首位，而用户下单时用不了这张券
+            #
+            # 实测当前门店 3 张券的适用商品（9900012387 / 9900016371 / 507411）
+            # **都不在 123 项菜单里** —— 不校验就会持续推荐无法使用的券。
+            #
+            # 判定规则（保守）：
+            #   · 官方给了 applies_to → 必须包含组合里**至少一个**商品，否则不生成
+            #   · 官方没给 applies_to → 不做推测，沿用旧行为（宁可漏也不错配）
+            if coupon.applies_to and not (cand_codes & set(coupon.applies_to)):
+                continue
+
             clone = Candidate(
                 items=list(cand.items), coupon=coupon,
                 quoted_price=None, nutrition=cand.nutrition,
@@ -641,11 +659,42 @@ def solve(snapshot: Snapshot, profile: TasteProfile, policy: DietaryPolicy,
     cands = apply_rotation(cands)
 
     alive = [c for c in cands if c.rejected_by is None]
-    # 已核价的候选优先展示 —— 给用户可执行的金额
-    alive.sort(key=lambda c: (c.is_quoted, c.score), reverse=True)
+
+    # ⚠️ 展示层最后一道纪律：**未核价候选不占推荐位**。
+    #
+    # 「不估算价格」有两层含义，第二层常被忽略：
+    #   · 不编造价格        —— 已实现（quoted_price 为 None 就是没有）
+    #   · 不用无法执行的价格占位 —— 本段实现
+    #
+    # 只做「已核价优先」的排序是不够的：当已核价候选不足 3 个时，
+    # 未核价候选仍会被填进 runners_up，邮件里就出现
+    # 「麦辣鸡腿汉堡 · 未核价」这种用户无法执行的条目。
+    # 用户看到没有金额的推荐，价值为零 —— 那不是诚实，是没做完。
+    #
+    # 因此：只要存在已核价候选，就只从已核价候选里选。
+    # 全部未核价时才回退展示，并在 notes 里说明金额未核实。
+    quoted = [c for c in alive if c.is_quoted]
+    unquoted = [c for c in alive if not c.is_quoted]
+
+    if quoted:
+        shown = quoted
+        if unquoted:
+            notes.append(
+                f"另有 {len(unquoted)} 个候选未取得官方报价，未列入推荐"
+                f"（宁可少推，也不给无法执行的价格）")
+    else:
+        shown = unquoted
+        if unquoted:
+            degraded.append("计价")
+            notes.append(
+                f"{len(unquoted)} 个候选均未取得 calculate-price 报价，"
+                f"金额未核实，建议以官方小程序为准")
+
+    # 已核价候选优先展示 —— 给用户可执行的金额
+    shown.sort(key=lambda c: (c.is_quoted, c.score), reverse=True)
     return Decision(
-        best=alive[0] if alive else None,
-        runners_up=alive[1:4],
+        best=shown[0] if shown else None,
+        runners_up=shown[1:4],
         degraded_layers=degraded,
         notes=notes,
     )

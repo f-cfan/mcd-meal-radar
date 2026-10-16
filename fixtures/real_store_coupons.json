@@ -1,0 +1,47 @@
+{
+  "_source": "麦当劳官方 MCP · query-store-coupons（真实录制 2026-10-16）",
+  "_captured_at": "2026-10-16 16:10",
+  "_pitfall": "必传 orderType（1-到店/2-外送）+ beType + beCode + addressId；data 是**数组**不是 {coupons:[...]}",
+  "_key_finding": "⚠️ 每张券带 products 字段= 适用商品编码范围。这是官方提供的硬约束，不该忽略：把「无糖饮品券」配到「麦辣鸡腿汉堡」上是无法核价的组合，会被判未核价甚至推荐失败。",
+  "data": [
+    {
+      "title": "中薯条买一送一",
+      "couponId": "8692944B045928451618BFF22F535D2A",
+      "couponCode": "MCD60701PE1103X908AQ9",
+      "tradeDateTime": "2026-10-12 10:30:00-2026-10-16 23:59:59",
+      "products": [
+        {
+          "productCode": "9900012387",
+          "productName": "中薯条买一送一"
+        }
+      ],
+      "promotionId": "112458028"
+    },
+    {
+      "title": "王牌小食拼",
+      "couponId": "E05F6BFB4BAFAA5DB44B233583BFE711",
+      "couponCode": "MCD600C30X7119809EPQ0",
+      "tradeDateTime": "2026-10-12 10:30:00-2026-10-16 23:59:59",
+      "products": [
+        {
+          "productCode": "9900016371",
+          "productName": "王牌小食拼"
+        }
+      ],
+      "promotionId": "112458029"
+    },
+    {
+      "title": "9.9元中杯冰美式",
+      "couponId": "264B97DBE02BE6CF996AA6914151C4A9",
+      "couponCode": "MCD6X1P90E6018300PQ06",
+      "tradeDateTime": "2026-10-16 00:00:00-2026-10-22 23:59:59",
+      "products": [
+        {
+          "productCode": "507411",
+          "productName": "麦咖啡™冰美式中杯"
+        }
+      ],
+      "promotionId": "112023002"
+    }
+  ]
+}

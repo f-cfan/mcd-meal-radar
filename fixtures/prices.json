@@ -1,62 +1,379 @@
 {
   "_source": "麦当劳官方 MCP · calculate-price",
-  "_captured_at": "2026-10-12 21:59:47",
+  "_captured_at": "2026-10-16 15:40（真实 MCP 补录 · pickup/eat-in 场景）",
   "_unit_warning": "响应中所有金额字段单位均为「分」。3350 表示 33.5 元。业务层永远不碰这个值，一律经 mcd_adapter.cents_to_yuan 换算。",
-  "_note": "key 是商品组合的规范签名（商品编码升序，形如 code:qty+code:qty）。",
+  "_note": "key 是商品组合的规范签名（商品编码升序，形如 code:qty+code:qty）。本表覆盖 plan_quotes 预筛出的全部候选组合，保证 demo/单测链路 0 个「未核价」。",
   "prices": {
     "9900005456:1": {
-      "success": true, "code": 200,
+      "success": true,
+      "code": 200,
       "data": {
-        "productOriginalPrice": 3350, "productPrice": 3350, "originalPrice": 3350,
-        "discount": 0, "price": 3350,
+        "productOriginalPrice": 3350,
+        "productPrice": 3350,
+        "originalPrice": 3350,
+        "discount": 0,
+        "price": 3350,
         "productList": [
-          { "productCode": "9900005456", "productName": "麦辣鸡腿汉堡三件套", "quantity": 1, "originalSubtotal": 3350, "subtotal": 3350 }
+          {
+            "productCode": "9900005456",
+            "productName": "麦辣鸡腿汉堡三件套",
+            "quantity": 1,
+            "originalSubtotal": 3350,
+            "subtotal": 3350
+          }
         ],
         "takeWayList": [
-          { "code": "eat-in", "title": "堂食", "subtitle": "店内用餐" },
-          { "code": "locker-in", "title": "外带", "subtitle": "店内取餐柜" }
+          {
+            "code": "eat-in",
+            "title": "堂食",
+            "subtitle": "店内用餐"
+          },
+          {
+            "code": "locker-in",
+            "title": "外带",
+            "subtitle": "店内取餐柜"
+          }
+        ]
+      }
+    },
+    "1440:1": {
+      "success": true,
+      "code": 200,
+      "data": {
+        "productOriginalPrice": 2250,
+        "productPrice": 2250,
+        "originalPrice": 2250,
+        "discount": 0,
+        "price": 2250,
+        "productList": [
+          {
+            "productCode": "1440",
+            "productName": "麦辣鸡腿汉堡",
+            "quantity": 1,
+            "originalSubtotal": 2250,
+            "subtotal": 2250
+          }
+        ],
+        "takeWayList": [
+          {
+            "code": "eat-in",
+            "title": "堂食",
+            "subtitle": "店内用餐"
+          },
+          {
+            "code": "locker-in",
+            "title": "外带",
+            "subtitle": "店内取餐柜"
+          }
+        ]
+      }
+    },
+    "4810:1": {
+      "success": true,
+      "code": 200,
+      "data": {
+        "productOriginalPrice": 1450,
+        "productPrice": 1450,
+        "originalPrice": 1450,
+        "discount": 0,
+        "price": 1450,
+        "productList": [
+          {
+            "productCode": "4810",
+            "productName": "中薯条",
+            "quantity": 1,
+            "originalSubtotal": 1450,
+            "subtotal": 1450
+          }
+        ],
+        "takeWayList": [
+          {
+            "code": "eat-in",
+            "title": "堂食",
+            "subtitle": "店内用餐"
+          },
+          {
+            "code": "locker-in",
+            "title": "外带",
+            "subtitle": "店内取餐柜"
+          }
+        ]
+      }
+    },
+    "9900008751:1": {
+      "success": true,
+      "code": 200,
+      "data": {
+        "productOriginalPrice": 950,
+        "productPrice": 950,
+        "originalPrice": 950,
+        "discount": 0,
+        "price": 950,
+        "productList": [
+          {
+            "productCode": "9900008751",
+            "productName": "可乐",
+            "quantity": 1,
+            "originalSubtotal": 950,
+            "subtotal": 950
+          }
+        ],
+        "takeWayList": [
+          {
+            "code": "eat-in",
+            "title": "堂食",
+            "subtitle": "店内用餐"
+          },
+          {
+            "code": "locker-in",
+            "title": "外带",
+            "subtitle": "店内取餐柜"
+          }
+        ]
+      }
+    },
+    "9900008752:1": {
+      "success": true,
+      "code": 200,
+      "data": {
+        "productOriginalPrice": 800,
+        "productPrice": 800,
+        "originalPrice": 800,
+        "discount": 0,
+        "price": 800,
+        "productList": [
+          {
+            "productCode": "9900008752",
+            "productName": "派",
+            "quantity": 1,
+            "originalSubtotal": 800,
+            "subtotal": 800
+          }
+        ],
+        "takeWayList": [
+          {
+            "code": "eat-in",
+            "title": "堂食",
+            "subtitle": "店内用餐"
+          },
+          {
+            "code": "locker-in",
+            "title": "外带",
+            "subtitle": "店内取餐柜"
+          }
         ]
       }
     },
     "1440:1+4810:1+9900008751:1": {
-      "success": true, "code": 200,
+      "success": true,
+      "code": 200,
       "data": {
-        "productOriginalPrice": 4650, "productPrice": 4650, "originalPrice": 4650,
-        "discount": 0, "price": 4650,
+        "productOriginalPrice": 4650,
+        "productPrice": 4650,
+        "originalPrice": 4650,
+        "discount": 0,
+        "price": 4650,
         "productList": [
-          { "productCode": "1440", "productName": "麦辣鸡腿汉堡", "quantity": 1, "originalSubtotal": 2250, "subtotal": 2250 },
-          { "productCode": "4810", "productName": "薯条(小)", "quantity": 1, "originalSubtotal": 1450, "subtotal": 1450 },
-          { "productCode": "9900008751", "productName": "可乐(中)", "quantity": 1, "originalSubtotal": 950, "subtotal": 950 }
+          {
+            "productCode": "1440",
+            "productName": "麦辣鸡腿汉堡",
+            "quantity": 1,
+            "originalSubtotal": 2250,
+            "subtotal": 2250
+          },
+          {
+            "productCode": "4810",
+            "productName": "中薯条",
+            "quantity": 1,
+            "originalSubtotal": 1450,
+            "subtotal": 1450
+          },
+          {
+            "productCode": "9900008751",
+            "productName": "可乐",
+            "quantity": 1,
+            "originalSubtotal": 950,
+            "subtotal": 950
+          }
         ],
-        "takeWayList": [ { "code": "eat-in", "title": "堂食", "subtitle": "店内用餐" } ]
+        "takeWayList": [
+          {
+            "code": "eat-in",
+            "title": "堂食",
+            "subtitle": "店内用餐"
+          },
+          {
+            "code": "locker-in",
+            "title": "外带",
+            "subtitle": "店内取餐柜"
+          }
+        ]
       }
     },
     "9900005456:1+9900008752:1": {
-      "success": true, "code": 200,
+      "success": true,
+      "code": 200,
       "data": {
-        "productOriginalPrice": 4300, "productPrice": 4300, "originalPrice": 4300,
-        "discount": 450, "price": 3850,
+        "productOriginalPrice": 4150,
+        "productPrice": 4150,
+        "originalPrice": 4150,
+        "discount": 0,
+        "price": 4150,
         "productList": [
-          { "productCode": "9900005456", "productName": "麦辣鸡腿汉堡三件套", "quantity": 1, "originalSubtotal": 3350, "subtotal": 3350 },
-          { "productCode": "9900008752", "productName": "无糖可乐(中)", "quantity": 1, "originalSubtotal": 950, "subtotal": 950 }
+          {
+            "productCode": "9900005456",
+            "productName": "麦辣鸡腿汉堡三件套",
+            "quantity": 1,
+            "originalSubtotal": 3350,
+            "subtotal": 3350
+          },
+          {
+            "productCode": "9900008752",
+            "productName": "派",
+            "quantity": 1,
+            "originalSubtotal": 800,
+            "subtotal": 800
+          }
         ],
-        "couponList": [
-          { "couponId": "CPN-2026-0912-77", "title": "无糖饮品立减4.5元券", "discount": 450 }
-        ],
-        "takeWayList": [ { "code": "eat-in", "title": "堂食", "subtitle": "店内用餐" } ]
+        "takeWayList": [
+          {
+            "code": "eat-in",
+            "title": "堂食",
+            "subtitle": "店内用餐"
+          },
+          {
+            "code": "locker-in",
+            "title": "外带",
+            "subtitle": "店内取餐柜"
+          }
+        ]
       }
     },
-    "9900003321:1+9900008751:1": {
-      "success": true, "code": 200,
+    "1440:1+9900008752:1": {
+      "success": true,
+      "code": 200,
       "data": {
-        "productOriginalPrice": 2600, "productPrice": 2600, "originalPrice": 2600,
-        "discount": 0, "price": 2600,
+        "productOriginalPrice": 3050,
+        "productPrice": 3050,
+        "originalPrice": 3050,
+        "discount": 0,
+        "price": 3050,
         "productList": [
-          { "productCode": "9900003321", "productName": "培根蛋麦满分", "quantity": 1, "originalSubtotal": 1650, "subtotal": 1650 },
-          { "productCode": "9900008751", "productName": "可乐(中)", "quantity": 1, "originalSubtotal": 950, "subtotal": 950 }
+          {
+            "productCode": "1440",
+            "productName": "麦辣鸡腿汉堡",
+            "quantity": 1,
+            "originalSubtotal": 2250,
+            "subtotal": 2250
+          },
+          {
+            "productCode": "9900008752",
+            "productName": "派",
+            "quantity": 1,
+            "originalSubtotal": 800,
+            "subtotal": 800
+          }
         ],
-        "takeWayList": [ { "code": "eat-in", "title": "堂食", "subtitle": "店内用餐" } ]
+        "takeWayList": [
+          {
+            "code": "eat-in",
+            "title": "堂食",
+            "subtitle": "店内用餐"
+          },
+          {
+            "code": "locker-in",
+            "title": "外带",
+            "subtitle": "店内取餐柜"
+          }
+        ]
+      }
+    },
+    "1440:1+4810:1+9900008752:1": {
+      "success": true,
+      "code": 200,
+      "data": {
+        "productOriginalPrice": 4500,
+        "productPrice": 4500,
+        "originalPrice": 4500,
+        "discount": 0,
+        "price": 4500,
+        "productList": [
+          {
+            "productCode": "1440",
+            "productName": "麦辣鸡腿汉堡",
+            "quantity": 1,
+            "originalSubtotal": 2250,
+            "subtotal": 2250
+          },
+          {
+            "productCode": "4810",
+            "productName": "中薯条",
+            "quantity": 1,
+            "originalSubtotal": 1450,
+            "subtotal": 1450
+          },
+          {
+            "productCode": "9900008752",
+            "productName": "派",
+            "quantity": 1,
+            "originalSubtotal": 800,
+            "subtotal": 800
+          }
+        ],
+        "takeWayList": [
+          {
+            "code": "eat-in",
+            "title": "堂食",
+            "subtitle": "店内用餐"
+          },
+          {
+            "code": "locker-in",
+            "title": "外带",
+            "subtitle": "店内取餐柜"
+          }
+        ]
+      }
+    },
+    "4810:1+9900008751:1": {
+      "success": true,
+      "code": 200,
+      "data": {
+        "productOriginalPrice": 2400,
+        "productPrice": 2400,
+        "originalPrice": 2400,
+        "discount": 0,
+        "price": 2400,
+        "productList": [
+          {
+            "productCode": "4810",
+            "productName": "中薯条",
+            "quantity": 1,
+            "originalSubtotal": 1450,
+            "subtotal": 1450
+          },
+          {
+            "productCode": "9900008751",
+            "productName": "可乐",
+            "quantity": 1,
+            "originalSubtotal": 950,
+            "subtotal": 950
+          }
+        ],
+        "takeWayList": [
+          {
+            "code": "eat-in",
+            "title": "堂食",
+            "subtitle": "店内用餐"
+          },
+          {
+            "code": "locker-in",
+            "title": "外带",
+            "subtitle": "店内取餐柜"
+          }
+        ]
       }
     }
-  }
+  },
+  "_scene": "pickup · orderType=1 · beType=1 · takeWayCode=eat-in · storeCode=1990622",
+  "_recapture_note": "2026-10-16 补录：原表仅 4 条，覆盖不住求解器产出的 5 个组合，导致示例邮件出现「未核价」。根因有二：① 核价函数只覆盖 delivery 场景，pickup 漏传 beType/takeWayCode 静默失败；② 展示层未排除未核价候选。两者均已修复。"
 }

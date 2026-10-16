@@ -142,7 +142,6 @@ def enrich_combo_nutrition(client: McdMcpClient, snapshot: Snapshot,
         return {}, {}
     if not nutrition_by_name:
         return {}, {}
-    alias_index = build_nutrition_alias_index(nutrition_by_name)
 
     enriched: dict = {}
     swaps: dict = {}
@@ -166,19 +165,68 @@ def enrich_combo_nutrition(client: McdMcpClient, snapshot: Snapshot,
             print(f"  [套餐详情跳过] {item.name} → {type(exc).__name__}")
             continue
 
-        detail = parse_meal_detail(payload)
-        if not detail.get("groups"):
+        # ⚠️ 官方数据坑（实测 2026-10-16）：同一编码在 query-meals 与
+        # query-meal-detail 里**名称可能对不上**（9900008752 菜单叫
+        # 「无糖可乐(中)」，详情却叫「派」）。名称不一致时挂营养 = 张冠李戴，
+        # 这里宁可跳过，只报未核实。
+        detail_name = str(((payload or {}).get("data") or {}).get("name") or "")
+        if detail_name and detail_name != item.name:
+            print(f"  ⚠️ 套餐营养跳过 {item.name}（{code}）："
+                  f"官方详情名「{detail_name}」与菜单名不一致，不做猜测")
             continue
 
-        total, matched, unmatched = nutrition_from_combo(
-            detail, nutrition_by_name, alias_index)
-        if matched:
-            enriched[code] = total
-        if total.sodium_mg:
-            swap = find_low_sodium_swap(detail, nutrition_by_name,
-                                        total.sodium_mg, alias_index)
-            if swap:
-                swaps[code] = swap
+        # ⚠️ 传 nutrition_by_name（按名称索引）而非 snapshot.nutrition（按编码索引）：
+        # 套餐子项（如「中薯条」）在菜单里根本不存在，只有名称表里查得到。
+        part_enriched, part_swaps = apply_combo_nutrition(
+            payload, nutrition_by_name)
+        if part_enriched:
+            enriched.update(part_enriched)
+        if part_swaps:
+            swaps.update(part_swaps)
+    return enriched, swaps
+
+
+def apply_combo_nutrition(payload: dict, nutrition_by_name: dict) -> tuple[dict, dict]:
+    """把一份 query-meal-detail 响应解成营养增量与低钠替换建议。
+
+    ⚠️ 抽成独立函数的原因：`enrich_combo_nutrition`（线上真实调用）与
+    `load_snapshot_from_fixtures`（离线 demo）都需要这一步。
+    早期版本只有线上走这条路径，于是 fixture 生成的示例邮件里
+    套餐营养全是「未核实」—— 预览与真实效果不一致。
+    逻辑只有一份，两个入口共用，才不会出现这种漂移。
+    """
+    from mcd_adapter import (build_nutrition_alias_index, find_low_sodium_swap,
+                             nutrition_from_combo, parse_meal_detail)
+
+    detail = parse_meal_detail(payload)
+    if not detail.get("groups"):
+        return {}, {}
+
+    alias_index = build_nutrition_alias_index(nutrition_by_name)
+    total, matched, _unmatched = nutrition_from_combo(
+        detail, nutrition_by_name, alias_index)
+    if not matched:
+        return {}, {}
+
+    enriched = {}
+    # 一个响应只对应一个商品；code 从响应里取，避免调用方再传一遍
+    code = str(((payload or {}).get("data") or {}).get("code") or "")
+    if not code:
+        data = (payload or {}).get("data")
+        if isinstance(data, str):
+            try:
+                code = str((json.loads(data).get("data") or {}).get("code") or "")
+            except (ValueError, AttributeError):
+                code = ""
+    if code:
+        enriched[code] = total
+
+    swaps: dict = {}
+    if total.sodium_mg:
+        swap = find_low_sodium_swap(detail, nutrition_by_name,
+                                    total.sodium_mg, alias_index)
+        if swap:
+            swaps[code] = swap
     return enriched, swaps
 
 
@@ -220,16 +268,22 @@ def plan_quotes(snapshot: Snapshot, profile, policy, top_k: int = 8,
 def quote_candidates(client: McdMcpClient, store_code: str, scene: str,
                      combos: list[list[tuple[str, int]]],
                      address_id: str | None = None,
-                     be_code: str | None = None
+                     be_code: str | None = None,
+                     take_way_code: str | None = None
                      ) -> tuple[dict[str, object], dict[str, dict]]:
     """线上核价：对每个候选组合调用 calculate-price 取真实金额。
 
     **这是本项目唯一的价格来源。** 没有 MCP 返回就没有金额，
     绝不调用任何模型估算或用标签价格推算。
 
-    ⚠️ 实测踩坑：入参字段名必须是 storeCode / beCode / orderType / beType，
-    少了 beCode 会返回 success 但 data 为空（表现为价格 0）。
-    故每次调用都校验响应，非空才写入计价表。
+    ⚠️ 实测踩坑（两个，都会伪装成"商品售罄"）：
+      ① 入参必须按场景矩阵齐全：`storeCode / beType / orderType`，
+         外送再加 `beCode + addressId`，到店再加 `takeWayCode`。
+         漏传 `beType` 或 `takeWayCode` 会返回「响应无 price 字段」——
+         看起来像售罄，实则是参数缺失。本函数已统一走
+         `mcd_adapter.build_price_args`，四个场景共用同一份逻辑。
+      ② 每次调用都要校验 `data.price` 非空才写入计价表。
+         空响应说明这次调用没拿到价格，绝不能当成"价格是 0"。
 
     另外注意：官方 calculate-price 的入参不接 couponId，券的抵扣体现在返回的
     discount 字段里。因此同一个商品组合在有无券时可能对应不同签名，
@@ -239,26 +293,23 @@ def quote_candidates(client: McdMcpClient, store_code: str, scene: str,
     避免用模块级可变全局传递状态（早期版本用 LAST_BREAKDOWNS，
     导致 solver 反向依赖 collector，职责边界被打破）。
     """
-    from mcd_adapter import parse_price, parse_price_breakdown
+    from mcd_adapter import build_price_args, parse_price, parse_price_breakdown
     from solver import combo_signature
-
-    is_delivery = scene in ("delivery", "group")
 
     table: dict[str, object] = {}
     breakdowns: dict[str, dict] = {}
     for combo in combos:
         key = combo_signature(combo)
-        args: dict = {
-            "storeCode": store_code,
-            "orderType": 2 if is_delivery else 1,
-            "items": [{"productCode": c, "quantity": q} for c, q in combo],
-        }
-        if is_delivery:
-            args["beType"] = 2 if scene == "delivery" else 6
-            if be_code:
-                args["beCode"] = be_code
-            if address_id:
-                args["addressId"] = address_id
+        try:
+            args = build_price_args(scene, store_code, combo,
+                                    be_code=be_code,
+                                    address_id=address_id,
+                                    take_way_code=take_way_code)
+        except MCPError as exc:
+            # 参数矩阵不满足时**不静默跳过**：整批核价都不可信
+            print(f"  [计价中止] {key} → {exc}")
+            print("  → 场景必填参数缺失，放弃本轮核价（宁可标未核价，也不猜价）")
+            return table, breakdowns
 
         try:
             payload = client.call_tool("calculate-price", args)
@@ -304,15 +355,63 @@ def load_snapshot_from_fixtures(scene: str = "delivery") -> Snapshot:
             )
             break
 
+    nutrition_by_name = parse_nutrition_list(load_fixture("nutrition", FIXTURE_DIR))
+    # 先按名称把标准单品营养映射到菜单编码 —— 与线上 build_nutrition_by_code 同一路径。
+    # ⚠️ 漏掉这步的症状很隐蔽：营养表是按**名称**索引的，而求解器按**编码**查，
+    # 于是「麦辣鸡腿汉堡」明明在表里（485 kcal/1208 mg），查出来却是 None。
+    nutrition = build_nutrition_by_code(menu, nutrition_by_name)
+
+    # 套餐营养补齐 —— 与线上 enrich_combo_nutrition 走同一个 apply_combo_nutrition。
+    # ⚠️ 早期版本只有线上补套餐营养，fixture 路径没补，
+    # 于是 demo / 预览邮件里套餐营养全是「未核实」，预览与真实效果不一致。
+    # 官方 list-nutrition-foods 只覆盖标准单品（实测 158 项），
+    # 套餐必须靠 query-meal-detail 的 rounds + isDefault 拆解后联表相加。
+    # ⚠️ 联表用的是**按名称索引的原始表**（nutrition_by_name），不是按编码索引的
+    # nutrition —— 套餐子项（如「中薯条」）在菜单里根本不存在，只有名称表里有。
+    combo_path = os.path.join(FIXTURE_DIR, "real_combo_details.json")
+    if os.path.exists(combo_path):
+        with open(combo_path, encoding="utf-8") as fh:
+            details = (json.load(fh) or {}).get("details") or {}
+        for _code, _payload in details.items():
+            # ⚠️ 官方数据坑（实测 2026-10-16）：同一个商品编码在
+            # `query-meals` 与 `query-meal-detail` 里**名称对不上**。
+            # 例：9900008752 在菜单里叫「无糖可乐(中)」，
+            # 但 query-meal-detail 返回的 name 是「派」，默认项是「菠萝派」。
+            # 若不校验，会把菠萝派的营养算到无糖可乐头上（221 kcal/147 mg钠），
+            # 而真实无糖可乐约 2 kcal —— 差 100 倍，直接误导用户控钠控热量。
+            #
+            # 修法：**只接受 detail.name 与菜单名一致的组合营养**，
+            # 不一致就跳过并告警。宁可显示「未核实」，也不能挂上别人的营养。
+            _detail_name = str(((_payload or {}).get("data") or {}).get("name") or "")
+            _menu_item = next((m for m in menu if m.code == _code), None)
+            if _menu_item and _detail_name and _detail_name != _menu_item.name:
+                print(f"  ⚠️ 套餐营养跳过 {_code}：菜单名「{_menu_item.name}」"
+                      f"≠ 官方详情名「{_detail_name}」（官方编码复用，不做猜测）")
+                continue
+            _enriched, _ = apply_combo_nutrition(_payload, nutrition_by_name)
+            nutrition.update(_enriched)
+
+    # 券 —— 优先用真实录制（含官方 products 适用范围），缺失才回落到文档样本。
+    # ⚠️ 为什么要优先真实券：官方 `query-store-coupons` 每张券都带
+    # `products: [{productCode, productName}]` 适用范围。文档样本里没有这个字段，
+    # 于是 solver 无从校验，会造出「无糖饮品券 + 汉堡」这种用不了的组合。
+    real_coupons_path = os.path.join(FIXTURE_DIR, "real_store_coupons.json")
+    if os.path.exists(real_coupons_path):
+        with open(real_coupons_path, encoding="utf-8") as fh:
+            store_coupons = parse_coupons(json.load(fh), store_scoped=True)
+    else:
+        store_coupons = parse_coupons(
+            load_fixture("store_coupons", FIXTURE_DIR), store_scoped=True)
+
     return Snapshot(
         fetched_at=menu_payload.get("_captured_at", _now_cst()),
         scene=scene,
         source="fixture",
         store=primary_store,
         menu=menu,
-        nutrition=parse_nutrition_list(load_fixture("nutrition", FIXTURE_DIR)),
+        nutrition=nutrition,
         my_coupons=parse_coupons(load_fixture("my_coupons", FIXTURE_DIR)),
-        store_coupons=parse_coupons(load_fixture("store_coupons", FIXTURE_DIR), store_scoped=True),
+        store_coupons=store_coupons,
         points=(load_fixture("points", FIXTURE_DIR).get("data") or {}).get("available"),
         campaign_names=[c["title"] for c in
                         (load_fixture("campaign_calendar", FIXTURE_DIR).get("data") or {})

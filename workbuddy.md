@@ -292,7 +292,7 @@ cands = apply_nutrition(cands, ...)
 | # | 做法 | 本项目实现 |
 |---|---|---|
 | 1 | `demo.py` 零依赖零 Token 30 秒跑通 | 5 条链路，19 份 fixtures |
-| 2 | 12+ 个真实响应录制 | `fixtures/` 共 19 份，含字段缺失与边界场景 |
+| 2 | 12+ 个真实响应录制 | `fixtures/` 共 21 份，含字段缺失与边界场景 |
 | 3 | 披露 MCP 真实踩坑 | `MCP_INTEGRATION.md` 记录 10 个坑 |
 | 4 | SVG Banner + 架构图 + 节日素材库 | `assets/banner.svg`、`assets/architecture.svg`、`assets/festivals/` |
 | 5 | CI 徽章 + 提交自检清单 | `.github/workflows/tests.yml`、`docs/SUBMIT_CHECKLIST.md` |
@@ -308,7 +308,7 @@ cands = apply_nutrition(cands, ...)
 
 ## 测试覆盖
 
-180 个单测，全部零依赖、零 Token、零网络：
+203 个单测，全部零依赖、零 Token、零网络：
 
 ```
 TestUnitTrap          5 个  单位换算防回归（分 vs 元）
@@ -323,7 +323,7 @@ TestStatutoryFestivals 9 个 中国 7 大国家法定节假日主题与素材库
 ```
 
 ```
-Ran 180 tests in 0.043s
+Ran 203 tests in 0.043s
 OK
 ```
 
@@ -333,7 +333,7 @@ OK
 
 ```bash
 python demo.py            # 五条链路，零 Token
-python tests/test_all.py  # 180 个单测
+python tests/test_all.py  # 203 个单测
 python scheduler.py --fixture --all   # 四档任务，零 Token
 ```
 

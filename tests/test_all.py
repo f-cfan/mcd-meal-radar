@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
@@ -146,9 +147,42 @@ class TestParseNutrition(unittest.TestCase):
 
     def test_normalize_name_strips_modifiers(self):
         from mcd_adapter import normalize_name
-        self.assertEqual(normalize_name("小薯条"), "小份薯条")
         self.assertEqual(normalize_name("麦乐鸡 5 块"), "麦乐鸡5块")
         self.assertEqual(normalize_name("某套餐（麦金卡免配）"), "某套餐")
+
+    def test_normalize_name_keeps_size_distinct(self):
+        """🔴 规格必须保留 —— 丢掉就串档。
+
+        真实 bug（2026-10-16）：早期 normalize_name 直接删掉括号，
+        「可乐(小)/可乐(中)/可乐(大)」全变成「可乐」，
+        于是三档商品共用同一份营养 —— 而实测三档分别是
+        107/147/224 kcal，串档等于给用户报错的数字。
+        """
+        from mcd_adapter import normalize_name
+        sizes = {normalize_name(f"可乐({s})") for s in ("小", "中", "大")}
+        self.assertEqual(len(sizes), 3, f"三档规格归一后不应相同：{sizes}")
+
+    def test_normalize_name_matches_official_variants(self):
+        """菜单名与营养表名必须归一到同一形态（实测 2026-10-16）。
+
+        官方两张表叫法不一致：
+          菜单   「可乐(中)」/「无糖可乐(中)」/「薯条(小)」
+          营养表 「可乐中杯」/「无糖可口可乐中杯」/「小薯条」
+        归一后必须相等，否则单品营养全部落空。
+        """
+        from mcd_adapter import normalize_name as n
+        pairs = [
+            ("可乐(中)", "可乐中杯"),
+            ("可乐(小)", "可乐小杯"),
+            ("无糖可乐(中)", "无糖可口可乐中杯"),
+            ("薯条(小)", "小薯条"),
+            ("薯条(中)", "中薯条"),
+        ]
+        for menu_name, nutrition_name in pairs:
+            self.assertEqual(
+                n(menu_name), n(nutrition_name),
+                f"{menu_name} 与 {nutrition_name} 应归一到同一形态："
+                f"{n(menu_name)} != {n(nutrition_name)}")
 
 
 class TestRealFixtures(unittest.TestCase):
@@ -1739,6 +1773,71 @@ class TestPreviewSite(unittest.TestCase):
         self.assertRegex(gitignore, r"(?m)^out/",
                          "out/ 必须保持忽略（含敏感数据）")
 
+    def test_collect_prefers_newer_copy(self):
+        """🔴 防回归：预览收集必须采用**较新**的副本。
+
+        真实 bug（2026-10-16）：`collect()` 先命中 out/preview/ 里的
+        旧文件就直接返回，导致本轮新生成的邮件没被拷进去——
+        预览站一直展示旧版本（表现为首屏截图仍显示「未核价」，
+        而源码早已修复）。预览在骗人，比没有预览更糟。
+        """
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        src = open(os.path.join(root, "scripts", "build_preview.py"),
+                   encoding="utf-8").read()
+        # 必须按mtime 取较新副本
+        self.assertIn("st_mtime", src,
+                      "collect() 应按 mtime 选择较新副本，否则会固化陈旧产物")
+        # 且不能再用「先命中即 break」的写法
+        self.assertNotIn("if cand.exists():\n                dst = OUT / fname",
+                         src, "collect() 不应先命中即返回（会固化旧副本）")
+
+
+class TestScreenshotNotStale(unittest.TestCase):
+    """🔴 README 首屏截图不得展示已修复的问题。
+
+    这类 bug 有个共同特征：**代码早已修好，但截图还是旧的**，
+    于是评审看到的是「未核价」，而作者以为已经解决了。
+    用户在 2026-10-16 就是这么发现问题的 —— 直接看示例邮件。
+
+    守卫思路：截图若存在，其 mtime 必须**不早于**它所展示的 HTML 源文件。
+    源码更新后未重截图 = 截图过期，必须报错。
+    """
+
+    SHOT_PAIRS = (
+        ("assets/shots/demo_digest.png", "out/demo_digest.html"),
+        ("assets/shots/festival-spring_festival.png",
+         "out/demo_festival_spring.html"),
+        ("assets/shots/care-lunch.png", "out/care_lunch.html"),
+    )
+
+    def test_shots_not_older_than_sources(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        for rel_shot, rel_src in self.SHOT_PAIRS:
+            sp = os.path.join(root, *rel_shot.split("/"))
+            hp = os.path.join(root, *rel_src.split("/"))
+            if not (os.path.exists(sp) and os.path.exists(hp)):
+                continue      # 产物未生成时跳过（CI 首次运行属正常）
+            self.assertGreaterEqual(
+                os.path.getmtime(sp), os.path.getmtime(hp),
+                f"{rel_shot} 比 {rel_src} 旧 —— 截图展示的是修复前的效果，"
+                f"请重跑 python scripts/build_preview.py --shots")
+
+    def test_no_unpriced_in_generated_previews(self):
+        """本地若已生成预览产物，则不得含「未核价」占位。"""
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        prev = os.path.join(root, "out", "preview")
+        if not os.path.isdir(prev):
+            self.skipTest("尚未生成预览产物（CI 首次运行属正常）")
+        offenders = []
+        for name in sorted(os.listdir(prev)):
+            if not name.endswith((".html", ".txt")):
+                continue
+            with open(os.path.join(prev, name), encoding="utf-8") as fh:
+                if "未核价" in fh.read():
+                    offenders.append(name)
+        self.assertEqual(offenders, [],
+                         f"以下预览产物仍含「未核价」：{offenders}")
+
 
 class TestComboNutritionBreakdown(unittest.TestCase):
     """套餐营养拆解 —— 解决「营养命中率仅 22%」的核心机制。
@@ -2457,6 +2556,296 @@ class TestFestivalCareCopy(unittest.TestCase):
             titles.add(t)
         self.assertEqual(len(titles), 4,
                          f"春节四档文案应各不相同，实际只有 {len(titles)} 种：{titles}")
+
+
+class TestScenePriceArgs(unittest.TestCase):
+    """🔴 核价入参矩阵 —— 这次「未核价」复现的真正根因。
+
+    真实 bug（2026-10-16 复现）：`quote_candidates` 只在外送场景
+    设置 `beType`，pickup / drive_thru 场景**完全没传** `beType`
+    和 `takeWayCode`。官方对参数缺失的响应是：
+
+        「beType1-到店取餐，2-麦乐送到家，5-得来速(DT)，6-企业团餐」
+
+    也就是说，**漏传参数不会报"参数错"，而是回一句枚举提示**，
+    看起来像"商品售罄"。上层只校验 `data.price` 非空，
+    于是这个组合被标记为未核价 —— 表现就是邮件里冒出「未核价」。
+
+    修法：把场景矩阵收敛成唯一事实来源 `build_price_args`，
+    四场景共用同一份逻辑，缺项直接抛错而不是发必然失败的请求。
+    """
+
+    def test_pickup_has_be_type_and_take_way_code(self):
+        from mcd_adapter import build_price_args
+        args = build_price_args("pickup", "1990622", [("1440", 1)],
+                                 take_way_code="eat-in")
+        self.assertEqual(args["beType"], 1)
+        self.assertEqual(args["orderType"], 1)
+        self.assertEqual(args["takeWayCode"], "eat-in")
+        self.assertNotIn("beCode", args)      # 到店自取官方不要求
+        self.assertNotIn("addressId", args)
+
+    def test_drive_thru_be_type_is_five(self):
+        """得来速是 beType=5，不是 1 也不是 2 —— 官方枚举里独立一档。"""
+        from mcd_adapter import build_price_args
+        args = build_price_args("drive_thru", "1990622", [("1440", 1)],
+                                 be_code="140064902", take_way_code="eat-in")
+        self.assertEqual(args["beType"], 5)
+        self.assertEqual(args["beCode"], "140064902")
+
+    def test_delivery_be_type_is_two(self):
+        from mcd_adapter import build_price_args
+        args = build_price_args("delivery", "1990622", [("1440", 1)],
+                                 be_code="140064902", address_id="ADDR-1")
+        self.assertEqual(args["beType"], 2)
+        self.assertEqual(args["orderType"], 2)
+        self.assertEqual(args["addressId"], "ADDR-1")
+        self.assertNotIn("takeWayCode", args)
+
+    def test_group_be_type_is_six(self):
+        from mcd_adapter import build_price_args
+        args = build_price_args("group", "1990622", [("1440", 1)],
+                                 be_code="140064902", address_id="ADDR-1")
+        self.assertEqual(args["beType"], 6)
+
+    def test_every_scene_always_sends_be_type(self):
+        """🔴 所有场景都必须带 beType —— 这正是被漏掉的那个字段。"""
+        from mcd_adapter import SCENES, build_price_args
+        for scene in SCENES:
+            args = build_price_args(
+                scene, "1990622", [("1440", 1)],
+                be_code="140064902", address_id="ADDR-1",
+                take_way_code="eat-in")
+            self.assertIn("beType", args, f"{scene} 场景缺少 beType")
+            self.assertIsInstance(args["beType"], int)
+
+    def test_missing_required_param_raises_instead_of_silent_call(self):
+        """缺必填项必须抛错 —— 发一个注定失败的请求比报错危险得多。"""
+        from mcd_adapter import MCPError, build_price_args
+        with self.assertRaises(MCPError):
+            build_price_args("pickup", "1990622", [("1440", 1)])  # 缺 takeWayCode
+        with self.assertRaises(MCPError):
+            build_price_args("delivery", "1990622", [("1440", 1)])  # 缺 beCode
+        with self.assertRaises(MCPError):
+            build_price_args("delivery", "1990622", [("1440", 1)],
+                             be_code="140064902")                   # 缺 addressId
+        with self.assertRaises(MCPError):
+            build_price_args("nonexistent", "1990622", [("1440", 1)])
+
+    def test_quote_candidates_aborts_when_param_matrix_invalid(self):
+        """参数矩阵不满足时整批放弃，而不是发出 N 个必然失败的请求。"""
+        from collector import quote_candidates
+        calls = []
+
+        class _Client:
+            def call_tool(self, name, args):
+                calls.append((name, args))
+                return {"success": True, "data": {"price": 100}}
+
+        table, bd = quote_candidates(
+            _Client(), "1990622", "pickup",
+            [[("1440", 1)], [("4810", 1)]], take_way_code=None)
+        self.assertEqual(table, {})
+        self.assertEqual(bd, {})
+        self.assertEqual(calls, [], "参数缺失时不应发出任何请求")
+
+
+class TestUnpricedNeverShown(unittest.TestCase):
+    """🔴 展示层纪律 —— 未核价候选不占推荐位。
+
+    真实 bug（2026-10-16 用户复现）：两个示例邮件里出现
+    「麦辣鸡腿汉堡 · 未核价」。根因不止fixture覆盖不足，
+    更根本的是 solver 只做了「已核价优先」排序，**没有排除**未核价：
+    已核价候选不足 3 个时，未核价仍会被填进 runners_up。
+
+    「不估算价格」有两层含义，第二层常被忽略：
+      · 不编造价格（quoted_price 为 None 就是没有）
+      · 不用无法执行的价格占位（用户看到没金额的推荐，价值为零）
+    """
+
+    def _decide(self, price_table, meal="lunch"):
+        from collector import load_snapshot_from_fixtures
+        from solver import DietaryPolicy, TasteProfile, solve  # noqa: F811
+        snap = load_snapshot_from_fixtures(scene="delivery")
+        return solve(snap, TasteProfile(order_count=4),
+                     DietaryPolicy(), price_table, meal=meal)
+
+    def test_full_fixture_has_zero_unpriced_in_output(self):
+        """真实录制价格表下，输出里不应出现任何未核价条目。"""
+        from collector import (load_price_table_from_fixtures,
+                               load_snapshot_from_fixtures,
+                               plan_quotes)
+        from solver import TasteProfile, DietaryPolicy, combo_signature
+        snap = load_snapshot_from_fixtures(scene="delivery")
+        table = load_price_table_from_fixtures()
+        for meal in ("breakfast", "lunch", "dinner", "tea", ""):
+            combos, _ = plan_quotes(snap, TasteProfile(order_count=4),
+                                     DietaryPolicy(), meal=meal)
+            missing = [combo_signature(c) for c in combos
+                       if combo_signature(c) not in table]
+            # 培根蛋麦满分是早餐，当前真实售罄 —— 官方返回无 price
+            self.assertEqual(
+                [m for m in missing if m != "9900003321:1"], [],
+                f"{meal or '(不限)'} 档 fixture 价格表覆盖不足：{missing}")
+
+    def test_partial_coverage_excludes_unquoted(self):
+        """🔴 核心回归：部分覆盖时，未核价候选不得进入推荐列表。"""
+        from collector import load_price_table_from_fixtures
+        full = load_price_table_from_fixtures()
+        # 只给单品「1440」有价：它 485 kcal / 1208 mg，在默认上限内能存活。
+        # ⚠️ 不能用 9900005456（三件套）：真实营养 921 kcal 会被身体层淘汰，
+        # 于是已核价候选为空，本测试想验的「部分覆盖」场景根本不会发生。
+        partial = {"1440:1": full["1440:1"]}
+        d = self._decide(partial)
+        self.assertIsNotNone(d.best)
+        self.assertTrue(d.best.is_quoted, "首选必须是已核价候选")
+        for a in d.runners_up:
+            self.assertTrue(a.is_quoted,
+                            f"备选出现未核价条目：{a.name}")
+        self.assertTrue(any("未列入推荐" in n for n in d.notes),
+                        f"应说明被排除的未核价候选数，实际 notes={d.notes}")
+
+    def test_all_unquoted_falls_back_with_warning(self):
+        """全部未核价时才回退展示，并必须明确告知金额未核实。"""
+        d = self._decide({})
+        self.assertIsNotNone(d.best, "全未核价时仍应给出候选（而非空手）")
+        self.assertFalse(d.best.is_quoted)
+        self.assertTrue(any("金额未核实" in n for n in d.notes),
+                        f"应说明金额未核实，实际 notes={d.notes}")
+
+    def test_no_price_table_never_prints_empty_recommendation(self):
+        """无价格表时不能出现「有推荐但全无金额」的静默状态。"""
+        d = self._decide(None)
+        self.assertTrue(d.notes, "无价格表必须给出说明")
+        self.assertIn("计价", d.degraded_layers)
+
+    def test_demo_output_has_no_unpriced_marker(self):
+        """端到端：demo 产出的示例邮件里不得出现「未核价」。"""
+        from collector import (load_price_table_from_fixtures,
+                               load_snapshot_from_fixtures)
+        from mailer import render_digest
+        from festivals import get_festival
+        snap = load_snapshot_from_fixtures(scene="delivery")
+        full = load_price_table_from_fixtures()
+        for meal in ("lunch", "dinner"):
+            d = self._decide(full, meal=meal)
+            html = render_digest(d, snap, "基于你的 4 笔历史订单", meal,
+                                 festival=get_festival("spring_festival"))
+            self.assertNotIn("未核价", html,
+                             f"{meal} 档示例邮件仍出现「未核价」占位")
+
+
+class TestCouponApplicability(unittest.TestCase):
+    """🔴 券的适用范围校验 —— 官方 `products` 字段必须用上。
+
+    真实 bug（2026-10-16 用户复现「未核价」时顺带发现）：
+    早期版本不校验适用范围，于是造出「无糖饮品立减券 + 麦辣鸡腿汉堡」
+    这种官方根本不允许的组合，后果有两层：
+      ① calculate-price 核不出价 → 邮件显示「未核价」
+      ② 更糟：它排在推荐首位，而用户下单时**用不了这张券**
+
+    实测（2026-10-16 16:10 真实调用 query-store-coupons）：
+      当前门店 3 张券，适用商品 9900012387 / 9900016371 / 507411，
+      **全都不在 123 项菜单里**。不校验就会持续推荐无法使用的券。
+    """
+
+    def _snap(self, coupons):
+        from decimal import Decimal as D
+        from mcd_adapter import Coupon, MenuItem, Money, Snapshot
+        m = Money(D("22.5"))
+        menu = [
+            MenuItem("1440", "麦辣鸡腿汉堡", "单品", ("人气经典",), m, m),
+            MenuItem("9900008751", "可乐(中)", "冷饮", ("冷饮",), m, m),
+        ]
+        return Snapshot(fetched_at="2026-10-16 12:00:00", scene="delivery",
+                        store=None, menu=menu, store_coupons=coupons)
+
+    def test_coupon_only_pairs_with_applicable_product(self):
+        from solver import (apply_preference, enumerate_coupon_combinations,
+                            TasteProfile)
+        from mcd_adapter import Coupon
+        from decimal import Decimal as D
+        coupon = Coupon(
+            coupon_id="C1", title="无糖饮品立减4.5元券",
+            value=Money(D("4.5")), threshold=None, expires_in_days=1,
+            applies_to=("9900008751",))     # 只适用于可乐
+        snap = self._snap([coupon])
+        cands = apply_preference(snap.menu, TasteProfile())
+        expanded = enumerate_coupon_combinations(cands, [], snap.store_coupons)
+
+        with_coupon = [c for c in expanded if c.coupon is not None]
+        for c in with_coupon:
+            self.assertIn("9900008751", [i.code for i in c.items],
+                          f"「无糖饮品券」不应配到 {[i.name for i in c.items]}")
+        self.assertTrue(with_coupon, "适用的商品仍应能配券（不能连这个也拦掉）")
+
+    def test_coupon_not_in_menu_produces_no_pair(self):
+        """券的适用商品不在菜单里时，不应产生任何券组合。"""
+        from solver import (apply_preference, enumerate_coupon_combinations,
+                            TasteProfile)
+        from mcd_adapter import Coupon
+        from decimal import Decimal as D
+        coupon = Coupon(
+            coupon_id="C2", title="中薯条买一送一",
+            value=Money(D("13.5")), threshold=None, expires_in_days=0,
+            applies_to=("9900012387",))     # 该编码不在菜单
+        snap = self._snap([coupon])
+        cands = apply_preference(snap.menu, TasteProfile())
+        expanded = enumerate_coupon_combinations(cands, [], snap.store_coupons)
+        self.assertEqual([c for c in expanded if c.coupon is not None], [],
+                         "券的适用商品不在菜单时不应配出组合")
+
+    def test_coupon_without_applicability_keeps_legacy_behavior(self):
+        """官方未提供适用范围时，不做推测，沿用原有配对行为。"""
+        from solver import (apply_preference, enumerate_coupon_combinations,
+                            TasteProfile)
+        from mcd_adapter import Coupon
+        from decimal import Decimal as D
+        coupon = Coupon(
+            coupon_id="C3", title="卡包券", value=Money(D("6")),
+            threshold=None, expires_in_days=5, applies_to=())  # 官方未提供
+        snap = self._snap([coupon])
+        cands = apply_preference(snap.menu, TasteProfile())
+        expanded = enumerate_coupon_combinations(cands, [], snap.store_coupons)
+        self.assertTrue([c for c in expanded if c.coupon is not None],
+                        "官方未提供范围时不应凭推测拦掉券")
+
+    def test_parse_coupons_reads_products_scope(self):
+        """🔴 parse_coupons 必须解析官方 products 适用范围字段。"""
+        from mcd_adapter import parse_coupons
+        payload = {"success": True, "data": [
+            {"couponId": "X1", "title": "9.9元中杯冰美式",
+             "products": [{"productCode": "507411",
+                           "productName": "麦咖啡™冰美式中杯"}],
+             "tradeDateTime": "2026-10-16 00:00:00-2026-10-22 23:59:59"}]}
+        coupons = parse_coupons(payload, store_scoped=True)
+        self.assertEqual(len(coupons), 1)
+        self.assertEqual(coupons[0].applies_to, ("507411",))
+
+    def test_parse_coupons_accepts_array_data(self):
+        """🔴 实测：`query-store-coupons` 的 data 是**数组**，不是对象。
+
+        早期实现只认 `{coupons:[...]}`，导致线上门店券恒为空、
+        券这一层整体降级。
+        """
+        from mcd_adapter import parse_coupons
+        arr = {"data": [{"couponId": "A", "title": "券A"}]}
+        self.assertEqual(len(parse_coupons(arr)), 1)
+        obj = {"data": {"coupons": [{"couponId": "B", "title": "券B"}]}}
+        self.assertEqual(len(parse_coupons(obj)), 1)
+
+    def test_real_fixture_coupons_have_scope(self):
+        """真实录制的门店券必须带适用范围（这是本次修复的数据基础）。"""
+        from mcd_adapter import parse_coupons
+        path = os.path.join(FIXTURES, "real_store_coupons.json")
+        if not os.path.exists(path):
+            self.skipTest("尚未录制真实门店券")
+        payload = json.load(open(path, encoding="utf-8"))
+        coupons = parse_coupons(payload, store_scoped=True)
+        self.assertTrue(coupons, "真实门店券应能解析出至少一张")
+        for c in coupons:
+            self.assertTrue(c.applies_to,
+                            f"真实券「{c.title}」应带官方 products 适用范围")
 
 
 if __name__ == "__main__":

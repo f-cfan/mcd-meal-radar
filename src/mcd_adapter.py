@@ -103,25 +103,78 @@ def yuan_str_to_money(raw: Any) -> Money:
 
 @dataclass(frozen=True)
 class SceneSpec:
-    """一个就餐场景对应的官方入参组合。"""
+    """一个就餐场景对应的官方入参组合。
 
+    ⚠️ `be_type` 是**必填且各场景不同**的字段，官方原文：
+    「beType1-到店取餐，2-麦乐送到家，5-得来速(DT)，6-企业团餐」。
+    漏传不会报明确错误，而是返回「响应无 price 字段」——
+    看起来像"商品售罄"，实则是参数缺失，极易误判。
+    """
     label: str
     order_type: int
+    be_type: int
     has_be_code: bool
     requires_take_way_code: bool
     requires_address_id: bool
 
 
 SCENES = {
-    "pickup": SceneSpec("到店自取", order_type=1, has_be_code=False,
+    "pickup": SceneSpec("到店自取", order_type=1, be_type=1, has_be_code=False,
                         requires_take_way_code=True, requires_address_id=False),
-    "drive_thru": SceneSpec("得来速", order_type=1, has_be_code=True,
+    "drive_thru": SceneSpec("得来速", order_type=1, be_type=5, has_be_code=True,
                             requires_take_way_code=True, requires_address_id=False),
-    "delivery": SceneSpec("麦乐送外送", order_type=2, has_be_code=True,
+    "delivery": SceneSpec("麦乐送外送", order_type=2, be_type=2, has_be_code=True,
                           requires_take_way_code=False, requires_address_id=True),
-    "group": SceneSpec("团餐", order_type=2, has_be_code=True,
+    "group": SceneSpec("团餐", order_type=2, be_type=6, has_be_code=True,
                        requires_take_way_code=False, requires_address_id=True),
 }
+
+
+def build_price_args(scene: str, store_code: str, items: list[tuple[str, int]],
+                     be_code: str | None = None,
+                     address_id: str | None = None,
+                     take_way_code: str | None = None) -> dict:
+    """按场景矩阵构造 `calculate-price` 入参。**四场景共用同一份逻辑。**
+
+    ⚠️ 这段逻辑原先只覆盖 delivery，导致 pickup / drive_thru 场景
+    漏传 `beType` 与 `takeWayCode`，核价静默失败（表现为"未核价"）。
+    修法不是给每个场景各写一段，而是把矩阵变成唯一事实来源。
+
+    必填项缺失时**直接抛 MCPError**，不发必然失败的请求 ——
+    「返回空」比「明确报错」危险得多，因为空数据会被误读成售罄。
+    """
+    spec = SCENES.get(scene)
+    if spec is None:
+        raise MCPError(f"未知就餐场景：{scene}（可选 {sorted(SCENES)}）")
+
+    args: dict = {
+        "storeCode": store_code,
+        "orderType": spec.order_type,
+        "beType": spec.be_type,
+        "items": [{"productCode": c, "quantity": q} for c, q in items],
+    }
+
+    if spec.has_be_code:
+        if not be_code:
+            raise MCPError(
+                f"{spec.label}场景必传 beCode，缺失会静默返回空价格")
+        args["beCode"] = be_code
+
+    if spec.requires_address_id:
+        if not address_id:
+            raise MCPError(f"{spec.label}场景必传 addressId（delivery-query-stores 提供）")
+        args["addressId"] = address_id
+
+    if spec.requires_take_way_code:
+        # takeWayCode 不能写死映射，官方在 calculate-price 返回的
+        # takeWayList 中给出 code（eat-in / locker-in）。
+        if not take_way_code:
+            raise MCPError(
+                f"{spec.label}场景必传 takeWayCode（取值来自 calculate-price 返回的 "
+                f"takeWayList，不能自行假设）")
+        args["takeWayCode"] = take_way_code
+
+    return args
 
 
 @dataclass(frozen=True)
@@ -144,13 +197,21 @@ class MenuItem:
 
 @dataclass(frozen=True)
 class Coupon:
-    """优惠券。券面价值无法从菜单推算时 value 为 None —— 这是官方数据的常见情形。"""
+    """优惠券。券面价值无法从菜单推算时 value 为 None —— 这是官方数据的常见情形。
 
+    ⚠️ `applies_to` 是**官方提供的适用商品编码范围**（实测 2026-10-16）：
+    `query-store-coupons` 每张券都带 `products: [{productCode, productName}]`。
+    这个字段必须用上 —— 不校验就会造出「无糖饮品券 + 麦辣鸡腿汉堡」
+    这种官方根本不允许的组合，表现为核价失败 / 推荐不可执行。
+    空元组表示**官方未提供适用范围**（不可推定为「全部适用」，
+    也不可推定为「都不适用」）—— 调用方按 store_scoped 语义区别处理。
+    """
     coupon_id: str
     title: str
     value: Money | None
     threshold: Money | None
     expires_in_days: int | None
+    applies_to: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -286,20 +347,43 @@ def parse_coupons(payload: dict, store_scoped: bool = False) -> list[Coupon]:
     """query-my-coupons / query-store-coupons / available-coupons 通用解析。
 
     三个工具的响应结构不完全一致，这里做宽松提取，取不到就返回空列表。
+
+    ⚠️ 实测（2026-10-16）`query-store-coupons` 的 `data` 是**数组**，
+    不是 `{coupons:[...]}` —— 早期只认对象结构，导致线上门店券恒为空，
+    券这一层整体降级。两种形态都要认。
+
+    每张券的 `products` 字段是**适用商品编码范围**，必须解析出来：
+    忽略它就会造出官方不允许的组合（券用不了 → 核价失败 → 未核价）。
     """
-    data = (payload or {}).get("data") or {}
-    raw_list = data.get("coupons") or data.get("list") or data.get("items") or []
+    data = (payload or {}).get("data")
+    if isinstance(data, list):
+        raw_list = data
+    elif isinstance(data, dict):
+        raw_list = (data.get("coupons") or data.get("list")
+                    or data.get("items") or [])
+    else:
+        raw_list = []
+
     out: list[Coupon] = []
     for raw in raw_list:
+        if not isinstance(raw, dict):
+            continue
         value = raw.get("value") or raw.get("amount") or raw.get("faceValue")
         threshold = raw.get("threshold") or raw.get("minAmount")
         days = raw.get("expiresInDays") or raw.get("validDays")
+        # 适用商品编码范围（官方字段 products）
+        applies_to = tuple(
+            str(p.get("productCode"))
+            for p in (raw.get("products") or [])
+            if isinstance(p, dict) and p.get("productCode")
+        )
         out.append(Coupon(
             coupon_id=str(raw.get("couponId") or raw.get("id") or ""),
             title=(raw.get("title") or raw.get("name") or "").strip(),
             value=cents_to_yuan(value) if value is not None else None,
             threshold=cents_to_yuan(threshold) if threshold is not None else None,
             expires_in_days=int(days) if days is not None else None,
+            applies_to=applies_to,
         ))
     return out
 
@@ -395,18 +479,37 @@ def normalize_name(name: str) -> str:
     邮件中显示「营养未提供」—— 绝不按 0 或估算值填充。
     """
     s = (name or "").strip()
+    # ⚠️ 括号里常常是**规格**（如「可乐(中)」），不能整段丢掉 ——
+    # 丢掉后「可乐」会同时匹配「可乐小杯/中杯/大杯」，直接串档。
+    # 做法：先抠出规格词，删括号，最后按品类补回正确的量词。
+    spec = ""
+    m = re.search(r"[（(]\s*([大小中])\s*[）)]", s)
+    if m:
+        spec = m.group(1)
     # 去掉规格括号，如「鸡肉汉堡随心选单人餐（麦金卡免配）」
     s = re.sub(r"[（(][^）)]*[）)]", "", s)
     # 去掉常见营销修饰
     for token in ("新品", "上新", "限定", "联名", "同款", "超值", "特惠"):
         s = s.replace(token, "")
-    # 规格词归一：小/中/大 → 小份/中份/大份
-    s = s.replace("小薯条", "小份薯条").replace("中薯条", "中份薯条").replace("大薯条", "大份薯条")
+    # 「无糖可口可乐」→「无糖可乐」（实测 2026-10-16：官方两张表叫法不一致，
+    # 菜单叫「无糖可乐(中)」而营养表叫「无糖可口可乐中杯」）。
+    # 这是官方固定叫法的确定性改写，**不是**模糊匹配。
+    s = s.replace("无糖可口可乐", "无糖可乐")
     # 麦乐鸡 N 块 → 麦乐鸡N块（去空格）
     s = re.sub(r"麦乐鸡\s*(\d+)\s*块", r"麦乐鸡\1块", s)
     # 去掉中英文引号差异
     s = s.replace("“", "").replace("”", "").replace('"', "")
-    return re.sub(r"\s+", "", s)
+    s = re.sub(r"\s+", "", s)
+    # 括号里抠出的规格补回，量词按品类定：
+    #   饮品 → 杯（可乐(中) → 可乐中杯）
+    #   薯条 → 官方营养表写「小薯条」而不是「小份薯条」，**不加量词**
+    if spec:
+        if re.search(r"(可乐|咖啡|奶茶|红茶|绿茶)([大小中])?$", s):
+            s = f"{s}{spec}杯"
+        elif re.search(r"薯条$", s):
+            # 官方营养表写「小薯条」，规格在前、无量词
+            s = f"{spec}薯条"
+    return s
 
 
 def build_nutrition_by_code(menu: list[MenuItem], by_name: dict[str, Nutrition]) -> dict[str, Nutrition]:

@@ -22,7 +22,7 @@
 [![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?style=flat-square&logo=python&logoColor=white)](#快速体验30秒)
 [![deps](https://img.shields.io/badge/dependencies-0-3FB950?style=flat-square)](#快速体验30秒)
 [![Token](https://img.shields.io/badge/Token-不需要-blue?style=flat-square)](#快速体验30秒)
-[![tests](https://img.shields.io/badge/tests-180%20passed-3FB950?style=flat-square)](tests/test_all.py)
+[![tests](https://img.shields.io/badge/tests-203%20passed-3FB950?style=flat-square)](tests/test_all.py)
 [![MCP](https://img.shields.io/badge/MCP-33%20tools%20官方-DA291C?style=flat-square)](https://mcp.mcd.cn)
 [![License](https://img.shields.io/badge/License-MIT-FFC72C?style=flat-square)](./LICENSE)
 
@@ -54,11 +54,11 @@ cd mcd-meal-radar
 python demo.py
 ```
 
-不需要 MCP Token，不装任何第三方库，也不联网 —— `fixtures/` 里存着 19 份
+不需要 MCP Token，不装任何第三方库，也不联网 —— `fixtures/` 里存着 21 份
 **真实 MCP 响应录制**，跑通五条链路：午间推荐 / 券过期提醒 / Token 失效降级 / 单位陷阱 / 中国国家法定节假日主题。
 
 ```bash
-python tests/test_all.py     # 180 个单测
+python tests/test_all.py     # 203 个单测
 ```
 
 ---
@@ -93,7 +93,7 @@ python demo.py
 
 **零第三方依赖 · 不需要 MCP Token · 不联网。**
 
-`fixtures/` 中存放 19 份响应样本（其中 7 份是 2026-10-15 真实调用录制，12 份是按官方文档结构整理的样本），`demo.py` 读取它们跑通五条链路：
+`fixtures/` 中存放 21 份响应样本（其中 9 份是真实调用录制，12 份是按官方文档结构整理的样本），`demo.py` 读取它们跑通五条链路：
 
 ```
 链路 A  午间推荐      → 四层约束求解，输出可解释建议
@@ -113,7 +113,7 @@ python demo.py
 | Token 失效邮件 | [`docs/samples/sample-email-token-expired.html`](docs/samples/sample-email-token-expired.html) |
 
 ```bash
-# 跑单测（180 个，覆盖单位换算 / 场景矩阵 / 字段缺失 / 双通道 / 画像推导 / 法定节假日 / 文档一致性）
+# 跑单测（203 个，覆盖单位换算 / 场景矩阵 / 字段缺失 / 双通道 / 画像推导 / 法定节假日 / 文档一致性）
 python tests/test_all.py
 ```
 
@@ -206,7 +206,7 @@ python tests/test_all.py
 | 真实营养 | ✅ **158 项**标准单品营养 |
 | 真实活动 | ✅ **16 个**进行中/未来活动 |
 | 真实积分 | ✅ `availablePoint` 读取成功 |
-| 单测 | **180 passed** |
+| 单测 | **203 passed** |
 
 **推荐结果为真实数据**：
 
@@ -231,9 +231,38 @@ python tests/test_all.py
 | D | 活动同一内容同时出现在「往期回顾」与「今日」段 | 只看字样会误杀进行中的活动 |
 | E | 外送必填参数是 `addressId + beType + beCode` | 漏传 `beCode` 时**成功但价格为 0** |
 | F | 实付含配送与打包费 | 只看商品价会让用户以为算错 |
+| G | 漏传 `beType` 官方回**枚举取值说明** | 与「商品售罄」响应几乎一样，无法靠响应区分 |
+| H | `query-store-coupons` 的 `products` 是**券的适用商品范围** | 忽略它会推荐用户**用不了**的券 |
+| I | 同一编码在菜单与详情里名称可能不同 | 会把菠萝派营养挂到无糖可乐上（221 vs 0 kcal） |
+| J | 名称归一化若丢掉规格 | 可乐小/中/大杯共用一份营养（实测 107/147/224 kcal） |
 
-其中 **E 最危险** —— API 返回成功但数据是空的，静默失败不易察觉。
-本项目在核价时强制校验 `price` 字段非空才写入计价表，否则标为「未核价」。
+其中 **E 和 G 最危险** —— API 返回成功但数据是空的，静默失败不易察觉；
+而 G 更阴：官方对「参数缺失」和「商品售罄」的响应几乎一样，
+**只能靠入参是否完整预判**，无法事后补救。
+
+本项目的两道防线：
+
+1. **不发注定失败的请求** —— 场景矩阵收敛为 `build_price_args` 唯一入口，
+   必填项缺失直接抛错，不发请求（宁可标「未核价」也不猜）
+2. **核价结果强制校验** —— `price` 字段非空才写入计价表，否则标「未核价」
+
+### 根治「未核价」：两层都要堵（2026-10-16 实战复盘）
+
+用户在示例邮件里看到「麦辣鸡腿汉堡 · 未核价」，一查发现**之前只堵了一半**：
+
+| 层 | 早期状态 | 修复 |
+|---|---|---|
+| 线上真实链路 | ✅ 已根治（`plan_quotes` 先预筛再核价） | — |
+| **`--fixture` 预览链路** | ❌ `price_table` 恒为空，**11 封示例邮件全是未核价** | 加载录制报价 + 覆盖率告警 |
+| **展示层** | ❌ 只做「已核价优先」排序，**没排除**未核价候选 | 有已核价候选时只从已核价里选 |
+| 截图/产物 | ❌ `collect()` 命中旧副本，导致预览站**长期展示旧版本** | 按 `mtime` 取较新 + 截图时效守卫 |
+
+核心认知：**「不估算价格」有两层含义，第二层常被忽略** ——
+① 不编造价格；② **不用无法执行的价格占位**。
+只做 ① 的话，已核价候选不足 3 个时，未核价仍会填进备选位。
+
+现在即使全部候选都核不到价，也只回退展示并明确告知「金额未核实」，
+不会给出一堆「未核价」的伪推荐。203 个单测锁死这套行为。
 
 ### 攻克「套餐营养命中率仅 22%」
 
@@ -501,8 +530,8 @@ mcd-meal-radar/
 │   ├── festivals.py         # 中国 7 大国家法定节假日日历引擎与素材库加载
 │   ├── mailer.py            # 邮件渲染（HTML + 纯文本 + 节日背景渲染）
 │   └── mail.py              # 双通道推送（Agent Mail 优先 / SMTP 备选）
-├── fixtures/                # 19 份响应样本（7 份真实调用录制 + 12 份文档结构样本）
-├── tests/test_all.py        # 180 个单测
+├── fixtures/                # 21 份响应样本（9 份真实调用录制 + 12 份文档结构样本）
+├── tests/test_all.py        # 203 个单测
 ├── assets/
 │   ├── festivals/           # 7 大中国国家法定节假日专属插画背景素材库与 manifest.json
 │   └── shots/               # 邮件渲染首屏预览图
