@@ -2847,6 +2847,309 @@ class TestCouponApplicability(unittest.TestCase):
             self.assertTrue(c.applies_to,
                             f"真实券「{c.title}」应带官方 products 适用范围")
 
+    def test_derived_samples_must_not_fake_official_scope(self):
+        """🔴 纪律：推导样本**不得**填 products 适用范围。
+
+        真实教训（2026-10-16 Gemini 复检发现）：为让「券品配对」看起来生效，
+        手工给 `my_coupons.json` / `store_coupons.json`（标注为官方 MCP 调用）
+        补上了 products 字段。这些适用范围是**编的** ——
+        官方 `query-my-coupons` 根本不返回该字段。
+
+        后果：solver 的适用性校验会基于假数据运行，
+        测试通过但线上表现完全不同。这违反项目最核心的「数据只来自官方」纪律。
+        """
+        for name in ("my_coupons", "store_coupons"):
+            path = os.path.join(FIXTURES, f"{name}.json")
+            if not os.path.exists(path):
+                continue
+            raw = json.load(open(path, encoding="utf-8"))
+            data = raw.get("data") or {}
+            items = data if isinstance(data, list) else (
+                data.get("coupons") or [])
+            for c in items:
+                self.assertFalse(
+                    c.get("products"),
+                    f"{name}.json 的券「{c.get('title')}」不应有 products 字段 —— "
+                    f"推导样本必须留空，填入推测值等于伪造官方数据。"
+                    f"真实响应见 real_store_coupons.json")
+
+    def test_zero_value_coupon_is_not_treated_as_discount(self):
+        """🔴 `_first_not_none` 修好 0 值之后，`value=0` 必须被区别对待。
+
+        否则会显示「面值 ¥0.00」并给候选加分 —— 用户会以为这是笔真优惠。
+        """
+        from decimal import Decimal as D
+        from mcd_adapter import Coupon, MenuItem, Money, Snapshot
+        from solver import (apply_preference, enumerate_coupon_combinations,
+                            TasteProfile)
+        coupon = Coupon(coupon_id="Z", title="零元券", value=Money(D("0")),
+                        threshold=None, expires_in_days=None, applies_to=())
+        menu = [MenuItem("1440", "麦辣鸡腿汉堡", "单品", ("人气经典",),
+                         Money(D("22.5")), Money(D("22.5")))]
+        snap = Snapshot(fetched_at="2026-10-16 12:00:00", scene="delivery",
+                        store=None, menu=menu, store_coupons=[coupon])
+        cands = enumerate_coupon_combinations(
+            apply_preference(menu, TasteProfile()), [], snap.store_coupons)
+        with_coupon = [c for c in cands if c.coupon is not None]
+        self.assertTrue(with_coupon, "官方给了 0 面值，仍应如实呈现")
+        for c in with_coupon:
+            self.assertFalse(
+                any("面值" in r for r in c.reasons),
+                f"0 元券不应显示为面值优惠：{c.reasons}")
+            self.assertTrue(any("不是真优惠" in w for w in c.warnings),
+                            f"应提示 0 元券不是真优惠：{c.warnings}")
+
+    def test_expires_in_days_zero_survives_or_chain(self):
+        """🔴 `expiresInDays: 0`（今天到期）不能被 `or` 链吞成 None。
+
+        Python 里 `0` 是 falsy：`raw.get("expiresInDays") or raw.get("validDays")`
+        会直接丢掉 0。这曾让「今天到期」的券永远不触发提醒。
+        """
+        from mcd_adapter import parse_coupons
+        payload = {"data": [
+            {"couponId": "E0", "title": "今天到期", "expiresInDays": 0},
+            {"couponId": "E3", "title": "三天后", "expiresInDays": 3},
+        ]}
+        by_id = {c.coupon_id: c.expires_in_days for c in parse_coupons(payload)}
+        self.assertEqual(by_id["E0"], 0, "expiresInDays=0 必须保留为 0")
+        self.assertEqual(by_id["E3"], 3)
+
+    def test_today_expiry_copy_is_natural(self):
+        """「今天到期」不能写成「0 天后过期」—— 后者读起来像 bug。"""
+        from decimal import Decimal as D
+        from mcd_adapter import Coupon, MenuItem, Money, Snapshot
+        from solver import (apply_preference, enumerate_coupon_combinations,
+                            TasteProfile)
+        coupon = Coupon(coupon_id="T", title="临期券", value=Money(D("4.5")),
+                        threshold=None, expires_in_days=0, applies_to=())
+        menu = [MenuItem("1440", "麦辣鸡腿汉堡", "单品", ("人气经典",),
+                         Money(D("22.5")), Money(D("22.5")))]
+        snap = Snapshot(fetched_at="2026-10-16 12:00:00", scene="delivery",
+                        store=None, menu=menu, store_coupons=[coupon])
+        cands = enumerate_coupon_combinations(
+            apply_preference(menu, TasteProfile()), [], snap.store_coupons)
+        reasons = [r for c in cands if c.coupon for r in c.reasons]
+        self.assertTrue(any("今天到期" in r for r in reasons),
+                        f"应出现「今天到期」文案，实际：{reasons}")
+        self.assertFalse(any("0 天后过期" in r for r in reasons),
+                         f"不应出现「0 天后过期」：{reasons}")
+
+    def test_max_pairs_counts_only_paired_coupons(self):
+        """🔴 `max_pairs` 必须在**通过适用性校验之后**才计数。
+
+        真实 bug（Gemini 复检发现）：早期写法 `for coupon in usable[:max_pairs]`
+        是先切片再校验。若专属券排在第 3 位而 max_pairs=2，
+        它会被切片直接丢掉，适用性校验形同虚设。
+        """
+        from decimal import Decimal as D
+        from mcd_adapter import Coupon, MenuItem, Money, Snapshot
+        from solver import (apply_preference, enumerate_coupon_combinations,
+                            TasteProfile)
+        # 第 1、2 张券不适用于任何商品，第 3 张才是本商品的专属券
+        coupons = [
+            Coupon(f"C{i}", f"无关券{i}", Money(D("1")), None, None,
+                   applies_to=(f"NOPE{i}",))
+            for i in (1, 2)
+        ] + [Coupon("C3", "专属券", Money(D("4.5")), None, 1,
+                    applies_to=("1440",))]
+        menu = [MenuItem("1440", "麦辣鸡腿汉堡", "单品", ("人气经典",),
+                         Money(D("22.5")), Money(D("22.5")))]
+        snap = Snapshot(fetched_at="2026-10-16 12:00:00", scene="delivery",
+                        store=None, menu=menu, store_coupons=coupons)
+        cands = enumerate_coupon_combinations(
+            apply_preference(menu, TasteProfile()), [], snap.store_coupons,
+            max_pairs=2)
+        titles = [c.coupon.title for c in cands if c.coupon]
+        self.assertIn("专属券", titles,
+                      f"专属券排在第 3 位但适用，不应被 max_pairs 切片丢弃：{titles}")
+
+
+class TestKcalSwapHint(unittest.TestCase):
+    """🔴 热量超标要给出**可执行**的替换建议，而不是改阈值。
+
+    背景（2026-10-16 Gemini 复检）：主力套餐「麦辣鸡腿汉堡三件套」
+    真实营养 921 kcal（485 汉堡 + 289 中薯条 + 147 可乐中杯，全官方数据），
+    默认上限 900 下被淘汰，邮件只写「超过上限」—— 用户拿不到任何可操作信息。
+
+    Gemini 的处理是把 `max_kcal` 默认值从 900 抬到 950。**这是错的**：
+    阈值来自用户健康需求，为了让某个商品入选去改它，等于让约束服务于结论。
+
+    正确做法：告诉用户「换成什么能进上限」，且建议必须**真的等价**。
+    本类锁死三条约束，缺一条建议就变噪音。
+    """
+
+    def _snap(self):
+        from collector import load_snapshot_from_fixtures
+        return load_snapshot_from_fixtures(scene="delivery")
+
+    def _triple_candidates(self):
+        from collector import load_price_table_from_fixtures
+        from solver import (apply_preference, attach_quoted_prices,
+                            enumerate_coupon_combinations, TasteProfile)
+        snap = self._snap()
+        c = apply_preference(snap.menu, TasteProfile(order_count=4))
+        c = enumerate_coupon_combinations(c, snap.my_coupons, snap.store_coupons)
+        c = attach_quoted_prices(c, load_price_table_from_fixtures())
+        return snap, c
+
+    def test_combo_parts_are_recorded(self):
+        """套餐子项必须被记录 —— 否则不知道「换哪一样」。"""
+        snap = self._snap()
+        self.assertIn("9900005456", snap.combo_parts)
+        self.assertEqual(set(snap.combo_parts["9900005456"]),
+                         {"麦辣鸡腿汉堡", "中薯条", "可乐中杯"})
+
+    def test_nutrition_by_name_table_available(self):
+        """按名称索引的标准单品表必须保留（子项名只在这张表里）。"""
+        snap = self._snap()
+        self.assertTrue(snap.nutrition_by_name)
+        self.assertIn("可乐中杯", snap.nutrition_by_name)
+        self.assertEqual(snap.nutrition_by_name["可乐中杯"].kcal, 147)
+
+    def _hint_for(self, limit):
+        import copy
+        from solver import apply_nutrition, DietaryPolicy
+        snap, cands = self._triple_candidates()
+        out = apply_nutrition(copy.deepcopy(cands), snap.nutrition,
+                             DietaryPolicy(max_kcal=limit),
+                             by_name_table=snap.nutrition_by_name,
+                             combo_parts_map=snap.combo_parts)
+        for c in out:
+            if "三件套" in " ".join(i.name for i in c.items):
+                return next((w for w in c.warnings if "换成" in w), ""), c
+        return "", None
+
+    def test_default_limit_gives_sugarfree_cola(self):
+        """🔴 核心：921 超 900 时，正确建议是「可乐中杯 → 无糖可口可乐中杯」。
+
+        147 → 0 kcal，正好省够，且同品类（都是可乐）同规格（都是中杯）。
+        """
+        hint, cand = self._hint_for(900)
+        self.assertIsNotNone(cand, "应找到三件套候选")
+        self.assertEqual(cand.nutrition.kcal, 921)
+        self.assertIn("可乐中杯", hint)
+        self.assertIn("无糖可口可乐中杯", hint)
+        self.assertIn("147", hint)
+
+    def test_hint_never_crosses_category(self):
+        """🔴 不能推荐「可乐 → 红茶」：都是饮料但口味不同，不是等价替换。
+
+        实测踩过：品类判定太松时会推「阳光柠檬红茶中杯」（147 → 117），
+        只省 30 kcal，既不够又换了口味。
+        """
+        hint, _ = self._hint_for(900)
+        self.assertNotIn("红茶", hint)
+        self.assertNotIn("绿茶", hint)
+        self.assertNotIn("奶茶", hint)
+
+    def test_hint_never_changes_size(self):
+        """不能推荐「中杯 → 大杯」：份量变了就不是「换一样」。"""
+        hint, _ = self._hint_for(900)
+        self.assertNotIn("大杯", hint)
+        self.assertNotIn("小杯", hint)
+
+    def test_hint_respects_nutrition_table_numbers(self):
+        """建议里的热量数字必须与官方营养表一致，不允许拍脑袋。"""
+        from solver import _nutrition_by_name
+        snap = self._snap()
+        hint, _ = self._hint_for(900)
+        cola = _nutrition_by_name("可乐中杯", snap.nutrition_by_name)
+        sugar_free = _nutrition_by_name("无糖可口可乐中杯", snap.nutrition_by_name)
+        self.assertEqual(cola.kcal, 147)
+        self.assertEqual(sugar_free.kcal, 0)
+        self.assertIn(f"{cola.kcal} → {sugar_free.kcal}", hint)
+
+    def test_tighter_limit_still_suggests(self):
+        """上限更紧时也应给出建议（放宽阈值不是唯一出路）。"""
+        for limit in (900, 850, 780):
+            hint, _ = self._hint_for(limit)
+            self.assertTrue(hint, f"上限 {limit} 时应给出替换建议")
+            self.assertIn(str(limit), hint, "建议里应写明目标上限")
+
+    def test_no_hint_when_no_equivalent_exists(self):
+        """找不到等价替身时**不给建议**，不编造。"""
+        hint, cand = self._hint_for(400)
+        if cand:
+            self.assertNotIn("换成", hint,
+                             f"无等价替身时不应给建议，实际：{hint}")
+
+    def test_max_kcal_default_unchanged(self):
+        """🔴 默认热量上限必须仍是 900 —— 不允许为了迁就某个商品而改它。
+
+        真实教训：外部评审曾建议把 900 抬到 950 让三件套回到榜首。
+        那是「让约束服务于结论」，正确解法是给可执行建议（见本类其余用例）。
+        """
+        from solver import DietaryPolicy
+        self.assertEqual(DietaryPolicy().max_kcal, 900)
+
+    def test_apply_nutrition_backward_compatible(self):
+        """新增参数必须有默认值，老调用方式不能崩。"""
+        from solver import apply_nutrition
+        import inspect
+        sig = inspect.signature(apply_nutrition)
+        self.assertIsNone(sig.parameters["by_name_table"].default)
+        self.assertIsNone(sig.parameters["combo_parts_map"].default)
+
+
+class TestCouponExpiryFocusAcrossFestivals(unittest.TestCase):
+    """🔴 节日不能屏蔽过期提醒（2026-10-16 Gemini 改动的回归锁）。
+
+    真实 bug：Gemini 为解决「四餐关怀标题串味」，把过期提醒的注入条件写成
+
+        is_expiry_focus = (...) and fest is None
+
+    结果是**法定假日期间 20:00 档的过期提醒全部失效**
+    （实测 today 从 1 张变 0 张，国庆/春节等 7 个节日全中）。
+
+    而「国庆/春节正是券最容易过期的时候」，恰恰最该提醒 ——
+    「过期提醒」与「节日文案」是两条独立信号，不该互相屏蔽。
+    """
+
+    def _snap(self):
+        from collector import load_snapshot_from_fixtures
+        return load_snapshot_from_fixtures(scene="delivery")
+
+    def test_expiry_slot_keeps_reminder_on_normal_days(self):
+        import scheduler as sched
+        from datetime import datetime
+        snap = self._snap()
+        base = datetime(2026, 10, 16, tzinfo=sched.CST)
+        expiry = next(s for s in sched.SLOTS if s.key == "expiry")
+        ctx = sched.build_care_context(snap, expiry, base, festival=None)
+        self.assertGreater(ctx.expiring_today, 0,
+                           "日常 20:00 档应检出今天到期的券")
+
+    def test_expiry_slot_keeps_reminder_during_festivals(self):
+        """🔴 核心回归：7 个法定假日的 20:00 档同样要检出过期券。"""
+        import scheduler as sched
+        from datetime import datetime
+        from festivals import list_statutory_festivals
+        snap = self._snap()
+        base = datetime(2026, 10, 16, tzinfo=sched.CST)
+        expiry = next(s for s in sched.SLOTS if s.key == "expiry")
+        baseline = sched.build_care_context(
+            snap, expiry, base, festival=None).expiring_today
+        self.assertGreater(baseline, 0, "前置条件：日常应能检出")
+        for fest in list_statutory_festivals():
+            ctx = sched.build_care_context(snap, expiry, base, festival=fest)
+            self.assertEqual(
+                ctx.expiring_today, baseline,
+                f"{fest.name}期间 20:00 档丢失了过期提醒"
+                f"（{baseline} → {ctx.expiring_today}）")
+
+    def test_other_slots_have_no_expiry_injection(self):
+        """09:00/11:00/16:30 三档不应被券到期信号覆盖标题（各自时段问候）。"""
+        import scheduler as sched
+        from datetime import datetime
+        snap = self._snap()
+        base = datetime(2026, 10, 16, tzinfo=sched.CST)
+        for slot in sched.SLOTS:
+            if slot.key == "expiry":
+                continue
+            ctx = sched.build_care_context(snap, slot, base, festival=None)
+            self.assertEqual(ctx.expiring_today, 0,
+                             f"{slot.key} 档不应注入过期提醒")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

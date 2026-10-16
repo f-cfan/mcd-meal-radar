@@ -280,7 +280,7 @@ yuan_str_to_money("33.5")   # → Money(33.5)   ← query-meals
 python demo.py
 ```
 
-读取 `fixtures/` 中录制的真实 MCP 响应，跑通四条链路。
+读取 `fixtures/` 中录制的真实 MCP 响应，跑通五条链路。
 
 ### 接入真实数据
 

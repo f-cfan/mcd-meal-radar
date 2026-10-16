@@ -151,13 +151,28 @@ def build_care_context(
     meal = current_meal_window(now.hour)
     fest = festival if festival is not None else detect_festival(now)
 
-    coupons = snapshot.store_coupons or snapshot.my_coupons
+    coupons = list(snapshot.store_coupons or []) + [
+        c for c in (snapshot.my_coupons or [])
+        if c.coupon_id not in {sc.coupon_id for sc in (snapshot.store_coupons or [])}
+    ]
     # 分两档统计：今天就到期（更紧迫）与 3 天内到期。
     # ⚠️ expiresInDays == 0 按官方语义就是「今天到期」，不能和「还有 1 天」混为一谈 ——
     # 否则会出现「说今天过期、实际还有 1 天」这种不准确的提醒。
-    expiring_today = [c for c in coupons if c.expires_in_days == 0]
-    expiring_soon = [c for c in coupons
-                     if c.expires_in_days is not None and 0 < c.expires_in_days <= 3]
+    #
+    # 仅在 20:00 过期提醒专档（或未指定 slot 的直接调用）将券到期信号注入关怀卡片标题，
+    # 保证 09:00/11:00/16:30 三餐档位呈现各自的时段问候（邮件第一段已有独立过期券红框）。
+    #
+    # ⚠️ 这里**不能**加 `and fest is None`：
+    # 节日与「该显示过期提醒」并不互斥。真实 bug（2026-10-16 复检发现）：
+    # 带上 `fest is None` 后，7 个法定假日的 20:00 档全部丢失过期提醒
+    # （实测 today 从 1 张变 0 张）—— 国庆/春节正是券最容易过期的时候，
+    # 恰恰最该提醒。「过期提醒」与「节日文案」是两条独立信号，不该互相屏蔽。
+    is_expiry_focus = slot is None or getattr(slot, "key", "") == "expiry"
+    expiring_today = [c for c in coupons if c.expires_in_days == 0] if is_expiry_focus else []
+    expiring_soon = [
+        c for c in coupons
+        if c.expires_in_days is not None and 0 < c.expires_in_days <= 3
+    ] if is_expiry_focus else []
 
     # 漏餐判定：仅当有历史订单时才算，否则视为「未知」而非「漏了」
     skipped = 0
@@ -250,9 +265,12 @@ def run_slot(
                     be_code=snap.store.be_code,
                 )
 
-                enriched, sodium_swaps = enrich_combo_nutrition(
+                enriched, sodium_swaps, combo_parts = enrich_combo_nutrition(
                     client, snap, snap.store.store_code, combos,
                     be_code=snap.store.be_code, be_type=2)
+                if combo_parts:
+                    # 套餐子项名 —— 让营养层能给出「换掉哪一样能省热量」的具体建议
+                    snap.combo_parts = combo_parts
                 if enriched:
                     merged = dict(snap.nutrition)
                     merged.update(enriched)

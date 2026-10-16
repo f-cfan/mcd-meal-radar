@@ -122,10 +122,10 @@ def enrich_combo_nutrition(client: McdMcpClient, snapshot: Snapshot,
     只对**送去核价的套餐**调用（通常 8 个），不对全店 131 项调 ——
     API 调用量与限流（600次/分）都可控。
 
-    返回 (补齐后的营养表, 降钠建议表)。
+    返回 (补齐后的营养表, 降钠建议表, 套餐子项表)。
     """
     if not combos or not snapshot.menu:
-        return {}, {}
+        return {}, {}, {}
 
     # ⚠️ 这里要的是「**标准单品**的营养表」，按名称索引。
     # snapshot.nutrition 是按菜单编码索引的，而菜单里 90% 是套餐 ——
@@ -139,12 +139,13 @@ def enrich_combo_nutrition(client: McdMcpClient, snapshot: Snapshot,
             client.call_tool("list-nutrition-foods", {}))
     except Exception as exc:
         print(f"  [营养表不可用] {type(exc).__name__}")
-        return {}, {}
+        return {}, {}, {}
     if not nutrition_by_name:
-        return {}, {}
+        return {}, {}, {}
 
     enriched: dict = {}
     swaps: dict = {}
+    parts_map: dict = {}
     for combo in combos:
         if len(combo) != 1:
             # 目前只处理单品级套餐；组合的构成需递归，暂不支持
@@ -177,13 +178,15 @@ def enrich_combo_nutrition(client: McdMcpClient, snapshot: Snapshot,
 
         # ⚠️ 传 nutrition_by_name（按名称索引）而非 snapshot.nutrition（按编码索引）：
         # 套餐子项（如「中薯条」）在菜单里根本不存在，只有名称表里查得到。
-        part_enriched, part_swaps = apply_combo_nutrition(
+        part_enriched, part_swaps, part_parts = apply_combo_nutrition(
             payload, nutrition_by_name)
         if part_enriched:
             enriched.update(part_enriched)
         if part_swaps:
             swaps.update(part_swaps)
-    return enriched, swaps
+        if part_parts:
+            parts_map.update(part_parts)
+    return enriched, swaps, parts_map
 
 
 def apply_combo_nutrition(payload: dict, nutrition_by_name: dict) -> tuple[dict, dict]:
@@ -200,13 +203,13 @@ def apply_combo_nutrition(payload: dict, nutrition_by_name: dict) -> tuple[dict,
 
     detail = parse_meal_detail(payload)
     if not detail.get("groups"):
-        return {}, {}
+        return {}, {}, {}
 
     alias_index = build_nutrition_alias_index(nutrition_by_name)
     total, matched, _unmatched = nutrition_from_combo(
         detail, nutrition_by_name, alias_index)
     if not matched:
-        return {}, {}
+        return {}, {}, {}
 
     enriched = {}
     # 一个响应只对应一个商品；code 从响应里取，避免调用方再传一遍
@@ -218,8 +221,17 @@ def apply_combo_nutrition(payload: dict, nutrition_by_name: dict) -> tuple[dict,
                 code = str((json.loads(data).get("data") or {}).get("code") or "")
             except (ValueError, AttributeError):
                 code = ""
+    # 套餐子项名 —— 供 solver 给出「换掉哪一样能省热量」的可执行建议。
+    # ⚠️ 套餐在菜单里是整体一项，营养表里没有这个名字，
+    # 不知道它由哪几样组成就只能干巴巴地说「超过上限」。
+    parts = tuple(
+        (g.get("default") or {}).get("name")
+        for g in (detail.get("groups") or [])
+        if (g.get("default") or {}).get("name")
+    )
     if code:
         enriched[code] = total
+    parts_map = {code: parts} if code and parts else {}
 
     swaps: dict = {}
     if total.sodium_mg:
@@ -227,7 +239,7 @@ def apply_combo_nutrition(payload: dict, nutrition_by_name: dict) -> tuple[dict,
                                     total.sodium_mg, alias_index)
         if swap:
             swaps[code] = swap
-    return enriched, swaps
+    return enriched, swaps, parts_map
 
 
 def plan_quotes(snapshot: Snapshot, profile, policy, top_k: int = 8,
@@ -331,9 +343,12 @@ def quote_candidates(client: McdMcpClient, store_code: str, scene: str,
 def load_snapshot_from_fixtures(scene: str = "delivery") -> Snapshot:
     """从本地录制数据构造 Snapshot。demo 与单测的入口。"""
     menu_payload = load_fixture("menu", FIXTURE_DIR)
-    status = json.load(open(os.path.join(FIXTURE_DIR, "store_menu_status.json"), encoding="utf-8"))
-    stores_payload = json.load(open(os.path.join(FIXTURE_DIR, "stores.json"), encoding="utf-8"))
-    prices = json.load(open(os.path.join(FIXTURE_DIR, "prices.json"), encoding="utf-8"))["prices"]
+    with open(os.path.join(FIXTURE_DIR, "store_menu_status.json"), encoding="utf-8") as fh:
+        status = json.load(fh)
+    with open(os.path.join(FIXTURE_DIR, "stores.json"), encoding="utf-8") as fh:
+        stores_payload = json.load(fh)
+    with open(os.path.join(FIXTURE_DIR, "prices.json"), encoding="utf-8") as fh:
+        prices = json.load(fh)["prices"]
 
     menu = parse_meals(menu_payload, scene)
 
@@ -356,6 +371,7 @@ def load_snapshot_from_fixtures(scene: str = "delivery") -> Snapshot:
             break
 
     nutrition_by_name = parse_nutrition_list(load_fixture("nutrition", FIXTURE_DIR))
+    combo_parts_map: dict = {}
     # 先按名称把标准单品营养映射到菜单编码 —— 与线上 build_nutrition_by_code 同一路径。
     # ⚠️ 漏掉这步的症状很隐蔽：营养表是按**名称**索引的，而求解器按**编码**查，
     # 于是「麦辣鸡腿汉堡」明明在表里（485 kcal/1208 mg），查出来却是 None。
@@ -388,8 +404,10 @@ def load_snapshot_from_fixtures(scene: str = "delivery") -> Snapshot:
                 print(f"  ⚠️ 套餐营养跳过 {_code}：菜单名「{_menu_item.name}」"
                       f"≠ 官方详情名「{_detail_name}」（官方编码复用，不做猜测）")
                 continue
-            _enriched, _ = apply_combo_nutrition(_payload, nutrition_by_name)
+            _enriched, _swaps, _parts = apply_combo_nutrition(
+                _payload, nutrition_by_name)
             nutrition.update(_enriched)
+            combo_parts_map.update(_parts)
 
     # 券 —— 优先用真实录制（含官方 products 适用范围），缺失才回落到文档样本。
     # ⚠️ 为什么要优先真实券：官方 `query-store-coupons` 每张券都带
@@ -410,6 +428,8 @@ def load_snapshot_from_fixtures(scene: str = "delivery") -> Snapshot:
         store=primary_store,
         menu=menu,
         nutrition=nutrition,
+        nutrition_by_name=nutrition_by_name,
+        combo_parts=combo_parts_map,
         my_coupons=parse_coupons(load_fixture("my_coupons", FIXTURE_DIR)),
         store_coupons=store_coupons,
         points=(load_fixture("points", FIXTURE_DIR).get("data") or {}).get("available"),
@@ -458,6 +478,9 @@ def fetch_live_snapshot(client: McdMcpClient, scene: str = "delivery",
     # 营养 —— 实测返回 DSL 字符串且表头无编码，需按名称联表
     nutr_by_name = parse_nutrition_list(client.call_tool("list-nutrition-foods", {}))
     snap.nutrition = build_nutrition_by_code(snap.menu, nutr_by_name)
+    # 同时保留按名称索引的原始表：套餐子项名（「中薯条」之类）只在名称表里存在，
+    # 营养层要给「换哪一样能省热量」的建议就必须靠它。
+    snap.nutrition_by_name = nutr_by_name
 
     # 券：两个来源分开抓，语义不同不可混用
     snap.my_coupons = parse_coupons(client.call_tool("query-my-coupons", {}))

@@ -5,10 +5,12 @@
 
     python demo.py
 
-演示四条完整链路，全部基于 fixtures/ 中录制的真实 MCP 响应：
+演示五条完整链路，全部基于 fixtures/ 中录制的真实 MCP 响应：
   链路 A  午间推荐     → 四层约束求解，输出可解释建议
   链路 B  Token 失效   → 优雅降级，发送续授权提醒（这是本项目独有）
   链路 C  券过期提醒   → 制造紧迫感的钩子
+  链路 D  单位陷阱     → 演示分与元混用的防线
+  链路 E  法定节假日   → 中国 7 大国家法定节假日主题与素材库
 
 跑通后用浏览器打开 out/demo_digest.html 看邮件真实效果。
 """
@@ -60,7 +62,7 @@ def demo_a() -> None:
         order_count=4,
     )
     policy = DietaryPolicy(
-        max_kcal=900,
+        max_kcal=950,
         max_sodium_mg=2000,
         budget_yuan="45",
     )
@@ -139,11 +141,14 @@ def demo_c() -> None:
     hr("链路 C · 券过期提醒（每天 20:00）")
 
     snap = load_snapshot_from_fixtures(scene="delivery")
-    coupons = snap.store_coupons or snap.my_coupons
+    coupons = list(snap.store_coupons or []) + [
+        c for c in (snap.my_coupons or [])
+        if c.coupon_id not in {sc.coupon_id for sc in (snap.store_coupons or [])}
+    ]
 
-    print("当前门店券：")
+    print("当前门店券与卡包券：")
     for c in coupons:
-        value = f"面值 ¥{c.value}" if c.value is not None else "面值待核（官方未提供）"
+        value = f"面值 {c.value}" if c.value is not None else "面值待核（官方未提供）"
         if c.expires_in_days is None:
             exp = "到期日未提供，不催"
         elif c.expires_in_days == 0:

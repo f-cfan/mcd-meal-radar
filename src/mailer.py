@@ -55,6 +55,19 @@ def _fmt_nutri(n: Nutrition) -> dict[str, str]:
     }
 
 
+def _all_coupons(snapshot: Snapshot) -> list[Coupon]:
+    """合并门店券与卡包券（按 coupon_id 去重），避免门店券无到期日字段时把卡包临期券短路吞掉。"""
+    seen: set[str] = set()
+    out: list[Coupon] = []
+    for c in list(snapshot.store_coupons or []) + list(snapshot.my_coupons or []):
+        cid = c.coupon_id or c.title
+        if cid in seen:
+            continue
+        seen.add(cid)
+        out.append(c)
+    return out
+
+
 def _expiring_coupons(coupons: list[Coupon], days: int = 3) -> list[Coupon]:
     """筛出 days 天内过期的券。expiresInDays 缺失的不算 —— 不编造天数。"""
     return [c for c in coupons
@@ -78,7 +91,7 @@ def render_digest(
     accent_clr = fest.palette.accent if fest else CLR["accent"]
     ok_bg = fest.palette.care_bg if fest else CLR["ok_bg"]
 
-    expiring = _expiring_coupons(snapshot.store_coupons or snapshot.my_coupons)
+    expiring = _expiring_coupons(_all_coupons(snapshot))
 
     rows: list[str] = []
 
@@ -357,7 +370,7 @@ def render_plain(decision: Decision, snapshot: Snapshot, slot: str = "午间",
 
 
 def _expiring_coupons_safe(snapshot: Snapshot) -> list[Coupon]:
-    return _expiring_coupons(snapshot.store_coupons or snapshot.my_coupons)
+    return _expiring_coupons(_all_coupons(snapshot))
 
 
 def _wrap(inner: str, bg_color: str | None = None) -> str:

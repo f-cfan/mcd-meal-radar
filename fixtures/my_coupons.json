@@ -1,13 +1,31 @@
 {
   "_source": "麦当劳官方 MCP · query-my-coupons",
   "_captured_at": "2026-10-12 22:01:03",
-  "_note": "卡包全量，不做门店校验。expiresInDays 缺失时本项目按「不催过期」处理，不编造天数。",
-  "success": true, "code": 200,
+  "_note": "卡包全量，不做门店校验。expiresInDays 缺失时本项目按「不催过期」处理，不编造天数。\n⚠️ 本文件是按官方文档结构整理的推导样本，不是真实响应 —— 官方 query-my-coupons 未提供 products 适用商品字段，故此处**刻意留空**。填入推测的适用范围等于伪造官方数据，会让 solver 的适用性校验基于假数据运行。",
+  "success": true,
+  "code": 200,
   "data": {
     "coupons": [
-      { "couponId": "CPN-2026-0912-77", "title": "无糖饮品立减4.5元券", "value": 450, "expiresInDays": 1 },
-      { "couponId": "CPN-2026-0905-21", "title": "汉堡第二件半价券",   "value": 1125, "expiresInDays": 3 },
-      { "couponId": "CPN-2026-0820-05", "title": "满30减6元券",        "value": 600, "threshold": 3000, "expiresInDays": 0 }
+      {
+        "couponId": "CPN-2026-0912-77",
+        "title": "无糖饮品立减4.5元券",
+        "value": 450,
+        "expiresInDays": 1
+      },
+      {
+        "couponId": "CPN-2026-0905-21",
+        "title": "汉堡第二件半价券",
+        "value": 1125,
+        "expiresInDays": 3
+      },
+      {
+        "couponId": "CPN-2026-0820-05",
+        "title": "满30减6元券",
+        "value": 600,
+        "threshold": 3000,
+        "expiresInDays": 0
+      }
     ]
-  }
+  },
+  "_is_derived_sample": true
 }

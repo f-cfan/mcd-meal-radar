@@ -22,7 +22,7 @@
 [![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?style=flat-square&logo=python&logoColor=white)](#快速体验30秒)
 [![deps](https://img.shields.io/badge/dependencies-0-3FB950?style=flat-square)](#快速体验30秒)
 [![Token](https://img.shields.io/badge/Token-不需要-blue?style=flat-square)](#快速体验30秒)
-[![tests](https://img.shields.io/badge/tests-203%20passed-3FB950?style=flat-square)](tests/test_all.py)
+[![tests](https://img.shields.io/badge/tests-221%20passed-3FB950?style=flat-square)](tests/test_all.py)
 [![MCP](https://img.shields.io/badge/MCP-33%20tools%20官方-DA291C?style=flat-square)](https://mcp.mcd.cn)
 [![License](https://img.shields.io/badge/License-MIT-FFC72C?style=flat-square)](./LICENSE)
 
@@ -58,7 +58,7 @@ python demo.py
 **真实 MCP 响应录制**，跑通五条链路：午间推荐 / 券过期提醒 / Token 失效降级 / 单位陷阱 / 中国国家法定节假日主题。
 
 ```bash
-python tests/test_all.py     # 203 个单测
+python tests/test_all.py     # 221 个单测
 ```
 
 ---
@@ -113,7 +113,7 @@ python demo.py
 | Token 失效邮件 | [`docs/samples/sample-email-token-expired.html`](docs/samples/sample-email-token-expired.html) |
 
 ```bash
-# 跑单测（203 个，覆盖单位换算 / 场景矩阵 / 字段缺失 / 双通道 / 画像推导 / 法定节假日 / 文档一致性）
+# 跑单测（221 个，覆盖单位换算 / 场景矩阵 / 字段缺失 / 双通道 / 画像推导 / 法定节假日 / 文档一致性）
 python tests/test_all.py
 ```
 
@@ -206,7 +206,7 @@ python tests/test_all.py
 | 真实营养 | ✅ **158 项**标准单品营养 |
 | 真实活动 | ✅ **16 个**进行中/未来活动 |
 | 真实积分 | ✅ `availablePoint` 读取成功 |
-| 单测 | **203 passed** |
+| 单测 | **221 passed** |
 
 **推荐结果为真实数据**：
 
@@ -262,7 +262,43 @@ python tests/test_all.py
 只做 ① 的话，已核价候选不足 3 个时，未核价仍会填进备选位。
 
 现在即使全部候选都核不到价，也只回退展示并明确告知「金额未核实」，
-不会给出一堆「未核价」的伪推荐。203 个单测锁死这套行为。
+不会给出一堆「未核价」的伪推荐。221 个单测锁死这套行为。
+
+### 外部评审的采纳与拒绝（2026-10-16 Gemini 二轮）
+
+外部评审提了 5 项，逐项实测后**采纳 3 项、拒绝 2 项**。记录理由比记录结论更重要：
+
+| 评审建议 | 处置 | 依据 |
+|---|---|---|
+| 券 `max_pairs` 先切片后校验 | ✅ **采纳** | 专属券排第 3 位时会被切片丢弃，校验形同虚设 |
+| `expiresInDays: 0` 被 `or` 吞成 `None` | ✅ **采纳** | Python 里 `0` 是 falsy，「今天到期」的券永远不触发提醒 |
+| 双源券短路吞掉临期券 | ✅ **采纳** | `store_coupons or my_coupons` 在门店券无到期日时会吞掉卡包临期券 |
+| 给推导样本券补 `products` 适用范围 | ❌ **拒绝** | 那是**伪造官方数据**。`query-my-coupons` 根本不返回该字段；填推测值会让适用性校验基于假数据运行，测试通过但线上完全不同 |
+| 把热量上限 900 抬到 950 | ❌ **拒绝** | 阈值来自用户健康需求，为了让某个商品入选去改它 = **让约束服务于结论** |
+
+**拒绝第 5 项的替代解法**：三件套真实营养 921 kcal（485+289+147，全官方数据）
+在 900 上限下被淘汰。正确解法是给出**可执行建议**而非抬阈值：
+
+> 把「可乐中杯」换成「无糖可口可乐中杯」，少 147 kcal（147 → 0），就能控制在 900 kcal 内
+
+这类建议必须满足三条约束，缺一条就变噪音：
+
+1. **同品类** —— 可乐不能换红茶（实测踩过：品类判太松会推「可乐→柠檬红茶」，
+   既换了口味又只省 30 kcal）
+2. **同规格** —— 中杯不能换大杯
+3. **最小改动** —— 优先换饮品（不影响饱腹感），且选「刚好够用」而非「省得最多」
+
+为此 `Snapshot` 新增两个字段：`nutrition_by_name`（按名称索引的标准单品表，
+子项名只在这张里有）与 `combo_parts`（官方 `query-meal-detail` 拆出的子项名）。
+
+### 一条必须守住的纪律：推导样本不得伪装成官方响应
+
+`fixtures/` 里真实录制与文档推导样本混放。一旦给推导样本补上官方才有的字段，
+整个「数据只来自官方」的承诺就失效了。因此：
+
+- 推导样本用 `_is_derived_sample: true` 显式标注
+- 真实录制一律用 `real_` 前缀（`TestDocConsistency` 靠这个前缀统计两类占比）
+- 新增测试断言推导样本**不得**出现 `products` 字段
 
 ### 攻克「套餐营养命中率仅 22%」
 
@@ -531,7 +567,7 @@ mcd-meal-radar/
 │   ├── mailer.py            # 邮件渲染（HTML + 纯文本 + 节日背景渲染）
 │   └── mail.py              # 双通道推送（Agent Mail 优先 / SMTP 备选）
 ├── fixtures/                # 21 份响应样本（9 份真实调用录制 + 12 份文档结构样本）
-├── tests/test_all.py        # 203 个单测
+├── tests/test_all.py        # 221 个单测
 ├── assets/
 │   ├── festivals/           # 7 大中国国家法定节假日专属插画背景素材库与 manifest.json
 │   └── shots/               # 邮件渲染首屏预览图

@@ -261,6 +261,12 @@ class Snapshot:
     store: Store | None
     menu: list[MenuItem] = field(default_factory=list)
     nutrition: dict[str, Nutrition] = field(default_factory=dict)
+    # 按**名称**索引的标准单品营养表（官方 list-nutrition-foods 原始形态）。
+    # ⚠️ `nutrition` 是按菜单编码索引的，里面**没有**套餐子项名（「中薯条」之类），
+    # 所以「换掉套餐里哪一样能省热量」这类建议只能靠这张表。
+    nutrition_by_name: dict[str, Nutrition] = field(default_factory=dict)
+    # 商品编码 → 套餐子项名（官方 query-meal-detail 的 rounds + isDefault 拆解）。
+    combo_parts: dict[str, tuple[str, ...]] = field(default_factory=dict)
     my_coupons: list[Coupon] = field(default_factory=list)
     store_coupons: list[Coupon] = field(default_factory=list)
     points: int | None = None
@@ -364,13 +370,19 @@ def parse_coupons(payload: dict, store_scoped: bool = False) -> list[Coupon]:
     else:
         raw_list = []
 
+    def _first_not_none(*vals):
+        for v in vals:
+            if v is not None:
+                return v
+        return None
+
     out: list[Coupon] = []
     for raw in raw_list:
         if not isinstance(raw, dict):
             continue
-        value = raw.get("value") or raw.get("amount") or raw.get("faceValue")
-        threshold = raw.get("threshold") or raw.get("minAmount")
-        days = raw.get("expiresInDays") or raw.get("validDays")
+        value = _first_not_none(raw.get("value"), raw.get("amount"), raw.get("faceValue"))
+        threshold = _first_not_none(raw.get("threshold"), raw.get("minAmount"))
+        days = _first_not_none(raw.get("expiresInDays"), raw.get("validDays"))
         # 适用商品编码范围（官方字段 products）
         applies_to = tuple(
             str(p.get("productCode"))

@@ -77,6 +77,11 @@ class Candidate:
     # 实付费用构成（原始「分」）。外送场景与菜单标价不同，需向用户说明：
     # price 含配送费与打包费，只看 productPrice 会以为算错了。
     fee_breakdown: dict[str, int | None] = field(default_factory=dict)
+    # 套餐子项名（来自官方 query-meal-detail 的 rounds + isDefault）。
+    # ⚠️ 为什么必须单独记：套餐在菜单里是**整体一项**（"麦辣鸡腿汉堡三件套"），
+    # 营养表里根本没有这个名字。要给出「换掉哪一样能省热量」的建议，
+    # 就必须知道它由哪几样组成 —— 否则只能干巴巴地说「超过上限」。
+    combo_parts: tuple[str, ...] = ()
 
     @property
     def is_quoted(self) -> bool:
@@ -276,7 +281,15 @@ def enumerate_coupon_combinations(
         expanded.append(cand)
 
         cand_codes = {i.code for i in cand.items}
-        for coupon in usable[:max_pairs]:
+        # ⚠️ `max_pairs` 必须在**通过适用性校验之后**才计数。
+        #
+        # 真实 bug（2026-10-16 Gemini 复检发现）：早期写法是
+        # `for coupon in usable[:max_pairs]` —— 先切片再校验适用性。
+        # 若专属券排在第 3 位而 max_pairs=2，它会被切片直接丢掉，
+        # 校验形同虚设。改为「校验通过 → paired += 1 → 攒够再 break」，
+        # 这样 max_pairs 限制的是**真正配上的券数**，而不是被考察的券数。
+        paired = 0
+        for coupon in usable:
             # ⚠️ 券的**适用范围**校验（官方 products 字段）。
             #
             # 真实 bug（2026-10-16 用户复现「未核价」时顺带发现）：
@@ -302,15 +315,28 @@ def enumerate_coupon_combinations(
                 warnings=list(cand.warnings),
             )
             src = "当前门店券" if coupon.coupon_id in store_ids else "卡包券"
-            if coupon.value is not None:
+            # ⚠️ 判「有面值」必须看**大于 0**，不能只看 `is not None`。
+            # `_first_not_none` 修好 0 值之后，`value=0` 会变成 `Money(0)`，
+            # 若仍按「非 None 即有面值」处理，就会给一张 0 元券加分并显示
+            # 「面值 ¥0.00」—— 用户会以为这是笔真优惠。
+            if coupon.value is not None and coupon.value.yuan > 0:
                 clone.score += Decimal(20)
                 clone.reasons.append(f"叠加{src}「{coupon.title}」，面值 {coupon.value}")
+            elif coupon.value is not None:
+                # 官方给了 0 —— 如实呈现，不当成优惠
+                clone.warnings.append(f"{src}「{coupon.title}」官方面值为 0，不是真优惠")
             else:
                 clone.warnings.append(f"{src}「{coupon.title}」面值无法从菜单推算，需实核")
             if coupon.expires_in_days is not None and coupon.expires_in_days <= 3:
                 clone.score += Decimal(8)
-                clone.reasons.append(f"该券 {coupon.expires_in_days} 天后过期")
+                # ⚠️ 「今天到期」不能写成「0 天后过期」—— 后者读起来像 bug。
+                exp_str = ("今天到期" if coupon.expires_in_days == 0
+                           else f"{coupon.expires_in_days} 天后过期")
+                clone.reasons.append(f"该券{exp_str}")
             expanded.append(clone)
+            paired += 1
+            if paired >= max_pairs:
+                break
 
     return expanded
 
@@ -428,16 +454,196 @@ def _nutr_sum(items: Iterable[MenuItem], table: dict[str, Nutrition]) -> Nutriti
     )
 
 
+def _swap_hint_for_kcal(cand: "Candidate",
+                        nutrition_table: dict[str, Nutrition],
+                        limit: int,
+                        by_name_table: dict[str, Nutrition] | None = None
+                        ) -> str:
+    """热量超标时，给出**具体可执行的替换建议**（数值全部来自官方营养表）。
+
+    ⚠️ 为什么需要它（2026-10-16 Gemini 复检时暴露）：
+    主力套餐「麦辣鸡腿汉堡三件套」真实营养 921 kcal
+    （485 汉堡 + 289 中薯条 + 147 可乐中杯，全部官方数据），
+    默认上限 900 kcal 下它被直接淘汰，邮件里只写「超过上限」——
+    用户看到的是一句拒绝，拿不到任何可操作信息。
+
+    **正确解法不是抬高阈值**：阈值来自用户健康需求，
+    为了让某个商品入选去改它，等于让约束去服务于结论。
+    应该告诉用户「换成什么能进上限」——
+    无糖可口可乐中杯官方值 0 kcal / 35 mg 钠，正好省下 147 kcal。
+
+    ⚠️ 关键：`cand.items` 里的套餐是**整体一项**（名字「麦辣鸡腿汉堡三件套」），
+    在营养表里根本不存在。必须用 `combo_parts`（官方 query-meal-detail 拆出的子项）
+    才能定位到「该换哪一样」。
+
+    找不到可行替换时返回空串 —— 不编造建议。
+    """
+    total = _nutr_sum(cand.items, nutrition_table)
+    if not total.kcal:
+        return ""
+    over = total.kcal - limit          # 需要至少省下的量
+    if over <= 0:
+        return ""
+
+    # 优先在套餐子项上找替换 —— 套餐在菜单里是整体一项，
+    # 只有知道它由哪几样组成，才谈得上「换掉哪一样」。
+    parts = list(getattr(cand, "combo_parts", ()) or ())
+    if parts:
+        # ⚠️ 子项要按「改动优先级」遍历（饮品 → 小食 → 主食），
+        # 不能按官方 rounds 的原始顺序 ——
+        # 官方把主菜放第一个，于是第一个找到的可行替身总是"换主菜"，
+        # 而用户宁愿换饮料。实测三件套就是这个坑。
+        for part_name in sorted(parts, key=_category_rank):
+            cur = _nutrition_by_name(part_name, by_name_table or nutrition_table)
+            if cur is None or cur.kcal is None:
+                continue
+            hint = _find_swap(part_name, cur, over,
+                              by_name_table or nutrition_table, limit)
+            if hint:
+                return hint
+        return ""
+
+    # 没有子项信息（单品组合）时，退回按菜单项本身找
+    for item in cand.items:
+        cur = _nutrition_of(item, nutrition_table, by_name_table)
+        if cur is None or cur.kcal is None:
+            continue
+        hint = _find_swap(item.name, cur, over,
+                          by_name_table or nutrition_table, limit)
+        if hint:
+            return hint
+    return ""
+
+
+def _find_swap(item_name: str, cur: Nutrition, over: int,
+               table: dict[str, Nutrition], limit: int) -> str:
+    """在同品类里找一个能省下 `over` kcal 的替身。找不到返回空串。
+
+    ⚠️ 三条约束缺一不可，否则建议就是噪音：
+      1. **同品类**（`_same_category`）—— 可乐不能换成红茶，口味不同不是等价替换
+      2. **同规格** —— 中杯不能换成大杯，份量变了就不是「换一样」
+      3. **刚好够用的最小改动** —— 省太多等于让用户牺牲本可以保留的那部分
+
+    反例（实测踩过两次）：三件套 921 kcal 超 900，
+      · 不做同品类判定 → 推「汉堡 → 猪柳麦满分」（换的是主菜，意图冲突）
+      · 品类判得太松 → 推「可乐中杯 → 阳光柠檬红茶中杯」（147→117，只省 30）
+      · 不排最小改动 → 推省得最多的那个，用户其实只需少 21 kcal
+    正确答案是「可乐中杯 → 无糖可口可乐中杯」（147 → 0 kcal，同品类同规格）。
+    """
+    want_size = _cup_size(item_name)
+    cands: list[tuple[int, int, str, Nutrition]] = []
+    for name, nutr in table.items():
+        if nutr.kcal is None or nutr.kcal >= cur.kcal:
+            continue
+        if not _same_category(item_name, name):
+            continue
+        if want_size and _cup_size(name) and _cup_size(name) != want_size:
+            continue
+        saved = cur.kcal - nutr.kcal
+        if saved >= over:
+            cands.append((_category_rank(item_name), saved - over, name, nutr))
+
+    if not cands:
+        return ""
+    cands.sort(key=lambda t: (t[0], t[1], t[2]))
+    _rank, _slack, name, nutr = cands[0]
+    saved = cur.kcal - nutr.kcal
+    return (f"把「{item_name}」换成「{name}」，"
+            f"少 {saved} kcal（{cur.kcal} → {nutr.kcal}），"
+            f"就能控制在 {limit} kcal 内")
+
+
+def _cup_size(name: str) -> str:
+    """从商品名提取杯/份规格：小 / 中 / 大。提取不到返回空串。"""
+    for size in ("小", "中", "大"):
+        if f"{size}杯" in name or f"{size}薯条" in name or f"({size})" in name:
+            return size
+    return ""
+
+
+def _nutrition_by_name(name: str, table: dict[str, Nutrition]):
+    """按名称（含规格归一）直接取官方营养，缺失返回 None。"""
+    from mcd_adapter import normalize_name
+    want = normalize_name(name)
+    for n, nutr in table.items():
+        if normalize_name(n) == want:
+            return nutr
+    return None
+
+
+def _nutrition_of(item, nutrition_table: dict[str, Nutrition],
+                  by_name_table: dict[str, Nutrition] | None = None):
+    """按名称（含规格归一）取一个菜单商品的官方营养，缺失返回 None。
+
+    先查按名称索引的表（标准单品表），再查按编码索引的表（菜单表）。
+    """
+    if by_name_table:
+        hit = _nutrition_by_name(item.name, by_name_table)
+        if hit is not None:
+            return hit
+    return _nutrition_by_name(item.name, nutrition_table)
+
+
+# 同品类判定：用于「换一样」建议的**严格**分类。
+#
+# ⚠️ 刻意比「都是饮料」更严：可乐换成红茶虽然都是饮品，但口味完全不同，
+# 不是等价替换。实测三件套场景下，宽松判定会推荐「可乐中杯 → 阳光柠檬红茶中杯」
+# （147 → 117 kcal，只省 30），而真正该推荐的是同规格的
+# 「无糖可口可乐中杯」（147 → 0 kcal，直接达标）。
+# 建议的可信度取决于它是不是**真的等价** —— 宁可少给，不给错。
+_CATEGORY_WORDS = (
+    ("无糖可口可乐", "可乐"), ("可口可乐", "可乐"), ("可乐", "可乐"),
+    ("红茶", "红茶"), ("绿茶", "绿茶"), ("奶茶", "奶茶"),
+    ("咖啡", "咖啡"),
+    ("薯条", "薯条"), ("麦乐鸡", "麦乐鸡"), ("派", "派"), ("玉米杯", "玉米杯"),
+    ("汉堡", "汉堡"), ("麦满分", "麦满分"),
+)
+# 换东西时的优先级：饮料 > 小食 > 主食
+_CATEGORY_RANK = {
+    "可乐": 0, "红茶": 1, "绿茶": 1, "奶茶": 1, "咖啡": 1,
+    "薯条": 2, "麦乐鸡": 2, "派": 2, "玉米杯": 2,
+    "汉堡": 3, "麦满分": 3,
+}
+
+
+def _same_category(a: str, b: str) -> bool:
+    """两个商品名是否属于同一品类（严格：口味也须一致）。
+
+    两边都没命中品类词时返回 False —— 不给建议总比给错建议好。
+    """
+    def cat(name: str) -> str:
+        for word, tag in _CATEGORY_WORDS:
+            if word in name:
+                return tag
+        return ""
+    ca, cb = cat(a), cat(b)
+    return bool(ca) and ca == cb
+
+
+def _category_rank(name: str) -> int:
+    """品类改动优先级，数字越小越优先换。"""
+    for word, tag in _CATEGORY_WORDS:
+        if word in name:
+            return _CATEGORY_RANK.get(tag, 9)
+    return 9
+
+
 def apply_nutrition(
     candidates: list[Candidate],
     nutrition_table: dict[str, Nutrition],
     policy: DietaryPolicy,
     relax_if_empty: bool = True,
+    by_name_table: dict[str, Nutrition] | None = None,
+    combo_parts_map: dict[str, tuple[str, ...]] | None = None,
 ) -> list[Candidate]:
     """营养硬上限过滤。
 
     若全部候选被营养约束杀掉，且 policy 允许，则放宽一档重试 ——
     空结果对用户毫无价值，给一个「超标但可选」的下限更实用。
+
+    `by_name_table` 是**按名称索引的标准单品营养表**（官方 list-nutrition-foods），
+    用于在套餐子项里找替换方案 —— 菜单编码索引的表里没有「中薯条」这类子项名。
+    `combo_parts_map` 是 商品编码 → 套餐子项名（官方 query-meal-detail 拆解结果）。
     """
     def pass_once(strict: bool) -> list[Candidate]:
         out: list[Candidate] = []
@@ -449,16 +655,30 @@ def apply_nutrition(
                 cand.rejected_by = f"偏好：命中排除关键词"
                 out.append(cand)
                 continue
+            # 记录套餐子项，供「换哪一样能省热量」的建议使用
+            if combo_parts_map:
+                for _item in cand.items:
+                    parts = combo_parts_map.get(_item.code)
+                    if parts:
+                        cand.combo_parts = tuple(parts)
+                        break
+
             nutr = _nutr_sum(cand.items, nutrition_table)
             cand.nutrition = nutr
 
             if strict:
                 if policy.max_kcal and nutr.kcal and nutr.kcal > policy.max_kcal:
-                    cand.rejected_by = f"营养：热量 {nutr.kcal} kcal 超过上限 {policy.max_kcal}"
+                    cand.rejected_by = (
+                        f"营养：热量 {nutr.kcal} kcal 超过上限 {policy.max_kcal}")
+                    hint = _swap_hint_for_kcal(cand, nutrition_table,
+                                              policy.max_kcal, by_name_table)
+                    if hint:
+                        cand.warnings.append(hint)
                     out.append(cand)
                     continue
                 if policy.max_sodium_mg and nutr.sodium_mg and nutr.sodium_mg > policy.max_sodium_mg:
-                    cand.rejected_by = f"营养：钠 {nutr.sodium_mg} mg 超过上限 {policy.max_sodium_mg}"
+                    cand.rejected_by = (
+                        f"营养：钠 {nutr.sodium_mg} mg 超过上限 {policy.max_sodium_mg}")
                     out.append(cand)
                     continue
             else:
@@ -651,7 +871,11 @@ def solve(snapshot: Snapshot, profile: TasteProfile, policy: DietaryPolicy,
         degraded.append("计价")
         notes.append("未取得 calculate-price 报价，金额未核实")
 
-    cands = apply_nutrition(cands, snapshot.nutrition, policy)
+    # 把「按名称索引的标准单品表」与「套餐子项表」一起传下去 ——
+    # 只有这两张表能让营养层给出「换掉套餐里哪一样能省热量」的具体建议。
+    cands = apply_nutrition(cands, snapshot.nutrition, policy,
+                            by_name_table=snapshot.nutrition_by_name or None,
+                            combo_parts_map=snapshot.combo_parts or None)
     cands = apply_campaign(cands, snapshot)
     cands = apply_budget(cands, policy)
     cands = apply_festival_boost(cands, festival)
