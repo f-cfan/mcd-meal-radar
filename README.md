@@ -246,11 +246,24 @@ MCP 返回 401
 
 **推荐：Agent Mail** —— QQ 邮箱团队的 Agent 专属邮箱服务，免授权码、扫码即用。
 
-```
-WorkBuddy 首页 → 更多 → 我的邮箱 → 启用（微信扫码）
+```bash
+npm install -g @tencent-qqmail/agently-cli
+agently-cli auth login          # OAuth 设备流，会自动打开浏览器，微信扫码授权
+agently-cli +me                 # 查看你的 Agent 邮箱地址
 ```
 
-你的 Agent 邮箱地址可在 [agent.qq.com](https://agent.qq.com) 查看。
+授权完成后**零配置即可发送** —— 程序会自动从 CLI 读取收件地址，无需手填。
+
+<details>
+<summary>WorkBuddy 用户其实不需要装 CLI</summary>
+
+WorkBuddy 已内置 Agent Mail 能力（首页「更多 → 我的邮箱」启用即可），
+直接在对话里说「帮我发一封邮件」就行。
+
+装 CLI 的意义在于：**让 cron / launchd 定时任务能无人值守跑**。
+内置能力只在对话内可用，脚本侧调不到。
+
+</details>
 
 <details>
 <summary>为什么优先用 Agent Mail 而不是自建 SMTP？</summary>
@@ -283,18 +296,32 @@ cp .env.example .env
 ```
 
 ```ini
-MCP_MCP_TOKEN=你的 Token
+MCD_MCP_TOKEN=你的 Token
 
 # 推送通道：auto（Agent 优先，失败回落）/ agent / smtp
 MAIL_CHANNEL=auto
 
-# 仅 SMTP 通道需要以下四项
+# 外送场景的配送地址（delivery-query-stores 必填）
+# 填 addressId；或留空并设 MCD_ADDRESS_PICK=first 让程序从地址簿取第一项
+MCD_ADDRESS_ID=
+
+# 仅 SMTP 通道需要以下四项（走 Agent Mail 时都不需要）
 SMTP_HOST=smtp.qq.com
 SMTP_PORT=465
 SMTP_USER=你的邮箱
-SMTP_PASSWORD=SMTP 授权码        # 注意：不是邮箱登录密码
+SMTP_PASSWORD=SMTP 授权码
 RADAR_TO=收件邮箱
 ```
+
+⚠️ **关于 `MCD_ADDRESS_PICK`** —— 程序**不会**静默取地址簿第一条。
+「发到哪个地址」是有后果的选择，需要你显式指定：
+
+```ini
+MCD_ADDRESS_PICK=first   # 取地址簿第一项
+MCD_ADDRESS_PICK=1       # 取第二项（索引从 0 起）
+```
+
+这与「金额绝不用估算」是同一条纪律：能自动的自动化，不能猜的不猜。
 
 ### 3. 配置 MCP 连接
 

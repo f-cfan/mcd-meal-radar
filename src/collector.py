@@ -38,6 +38,39 @@ CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 
 CST = timezone(timedelta(hours=8))
 
+
+def _pick_address(client: McdMcpClient) -> str | None:
+    """按 MCD_ADDRESS_PICK 从地址簿选一个地址。
+
+    默认**不启用** —— 「发到哪个地址」是有后果的选择，
+    不该静默取第一条。只有用户显式设了 MCD_ADDRESS_PICK 才会生效：
+
+      MCD_ADDRESS_PICK=first     取地址簿第一项
+      MCD_ADDRESS_PICK=1         取第 2 项（索引从 0 起，故 1 表示第二项）
+
+    这与「绝不静默假设」是同一条纪律：能自动的自动化，不能猜的不猜。
+    """
+    pick = os.environ.get("MCD_ADDRESS_PICK", "").strip()
+    if not pick:
+        return None
+    try:
+        payload = client.call_tool("delivery-query-addresses", {})
+    except MCPError:
+        return None
+    data = (payload.get("data") or {})
+    addrs = data.get("addresses") or data.get("list") or []
+    if not addrs:
+        return None
+    if pick.lower() == "first":
+        return addrs[0].get("addressId")
+    try:
+        idx = int(pick)
+    except ValueError:
+        return None
+    if 0 <= idx < len(addrs):
+        return addrs[idx].get("addressId")
+    return None
+
 # 最近一次 quote_candidates 的费用构成，供 solver 填充候选。
 # 用模块级容器而非返回值扩展，是为了让既有 quote_candidates 签名不变、
 # 不破坏 demo 与单测的调用方式。
@@ -298,6 +331,15 @@ def get_snapshot(mode: str = "fixture", scene: str = "delivery",
 
     live 模式下 Token 失效会自动降级为缓存快照（degraded=True），
     调用方可据此在邮件中说明「本次为缓存数据」。
+
+    ⚠️ 外送场景必须有 addressId —— 官方 delivery-query-stores 必填该参数，
+    缺了会返回「缺少参数」。本函数按以下顺序解析：
+      1. 显式传入的 address_id
+      2. 环境变量 MCD_ADDRESS_ID
+      3. 调 delivery-query-addresses 取地址簿第一项（需指定 MCD_ADDRESS_PICK）
+    第 3 步是刻意设计的：让用户零配置也能跑通外送链路，
+    但**发到哪个地址**必须用户明确，不能静默猜 —— 因此需要设
+    MCD_ADDRESS_PICK=first（或索引序号）才会启用。
     """
     if mode == "fixture":
         return load_snapshot_from_fixtures(scene)
@@ -308,6 +350,10 @@ def get_snapshot(mode: str = "fixture", scene: str = "delivery",
             # 09:00 任务：自动领取所有当前可用券
             # 这是唯一会改变账户状态的调用，故与所有只读调用物理隔离
             client.call_tool("auto-bind-coupons", {})
+
+        # 外送场景解析地址：显式 → 环境变量 → 用户显式授权的「取第一项」
+        if scene in ("delivery", "group") and not address_id:
+            address_id = os.environ.get("MCD_ADDRESS_ID") or _pick_address(client)
         snap = fetch_live_snapshot(client, scene, address_id)
         save_cache(snap)
         return snap

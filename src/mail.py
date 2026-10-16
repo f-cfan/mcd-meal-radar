@@ -30,12 +30,15 @@ Agent Mail 是 QQ 邮箱团队为 Agent 提供的专属邮箱服务（`agent.qq.
 
 from __future__ import annotations
 
+import json
 import os
 import smtplib
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from email.message import EmailMessage
 from email.utils import formataddr, formatdate
+import glob
 from shutil import which
 
 
@@ -71,23 +74,106 @@ class PushResult:
 # 通道一：Agent Mail（推荐）
 # --------------------------------------------------------------------------
 
+def _find_agent_cli() -> str | None:
+    """定位 agently-cli。
+
+    不能只依赖 PATH —— npm 全局装的 bin 常常不在交互式 shell 的 PATH 里
+    （例如 managed runtime 目录下，cron 环境更是完全没有）。
+    因此按以下顺序查找：
+      1. AGENTLY_CLI 环境变量显式指定
+      2. PATH
+      3. npm 全局目录（现场探测，不写死版本号）
+    """
+    explicit = _get("AGENTLY_CLI", "")
+    if explicit and os.path.exists(explicit):
+        return explicit
+
+    found = which("agently-cli")
+    if found:
+        return found
+
+    # 现场探测 npm 全局 bin 目录，避开写死 runtime 版本号
+    for pattern in (
+        os.path.expanduser("~/.workbuddy/binaries/node/versions/*/bin/agently-cli"),
+        os.path.expanduser("~/.npm-global/bin/agently-cli"),
+        "/usr/local/bin/agently-cli",
+        "/opt/homebrew/bin/agently-cli",
+    ):
+        matches = sorted(glob.glob(pattern))
+        if matches:
+            return matches[-1]      # 取最新版本
+    return None
+
+
 def agent_mail_available() -> bool:
     """检测 Agent Mail CLI 是否可用。
 
     注意：WorkBuddy **内置**的 Agent Mail 能力不一定暴露为 CLI。
     这里只检测 CLI；内置通道由 Agent 上层直接调用（见 README 双通道说明）。
     """
-    return which("agently-cli") is not None
+    return _find_agent_cli() is not None
+
+
+def agent_mail_address() -> str | None:
+    """从 CLI 查询当前 Agent Mail 地址。
+
+    好处：用户零配置 —— 装了 CLI 登录过就能直接发，
+    不需要在 .env 里手填收件地址（手填容易漏、也容易写错）。
+    """
+    cli = _find_agent_cli()
+    if not cli:
+        return None
+    try:
+        proc = subprocess.run(
+            [cli, "+me"], text=True, capture_output=True, timeout=30,
+        )
+        if proc.returncode != 0:
+            return None
+        payload = json.loads(proc.stdout)
+        aliases = (payload.get("data") or {}).get("aliases") or []
+        for a in aliases:
+            if a.get("is_primary") and a.get("email"):
+                return str(a["email"])
+        return aliases[0].get("email") if aliases else None
+    except Exception:
+        return None
+
+
+def agent_mail_quota() -> dict:
+    """查询额度。**requests_per_minute 仅 10**，四档任务需注意节流。"""
+    cli = _find_agent_cli()
+    if not cli:
+        return {}
+    try:
+        proc = subprocess.run(
+            [cli, "+me"], text=True, capture_output=True, timeout=30,
+        )
+        if proc.returncode != 0:
+            return {}
+        data = (json.loads(proc.stdout).get("data") or {})
+        return {
+            "daily_send_quota": data.get("rate_limits", {}).get("daily_send_quota"),
+            "requests_per_minute": data.get("rate_limits", {}).get("requests_per_minute"),
+        }
+    except Exception:
+        return {}
 
 
 def push_via_agent(to: str, subject: str, html_body: str,
                    text_body: str = "") -> PushResult:
     """通过 Agent Mail CLI 发送。
 
-    仅在 CLI 已安装时可用。WorkBuddy 内置通道不由本函数处理 ——
-    那是 Agent 上层的职责，不在离线脚本的能力范围内。
+    ⚠️ 命令语法（实测 v1.0.18，勿凭直觉改）：
+        agently-cli message +send --to X --subject Y --body-file Z --body-format html
+      · 子命令带 **`+` 前缀**（`message +send` 而非 `message send`）
+      · `--body-file` 必须是**相对当前目录**的路径（官方明确要求）
+      · `--body-format html` 需显式指定，否则 HTML 会被当纯文本
+      · `--confirmed` 用于跳过交互确认，非交互环境必须加，否则会挂起等输入
+
+    HTML 正文超过 1 MB 会被拒绝，因此本函数走「临时文件 + body-file」而非
+    走 stdin —— 既满足相对路径要求，也避免超长 HTML 的转义问题。
     """
-    cli = which("agently-cli")
+    cli = _find_agent_cli()
     if not cli:
         return PushResult(
             ok=False,
@@ -96,22 +182,58 @@ def push_via_agent(to: str, subject: str, html_body: str,
             channel="agent-mail",
         )
 
-    cmd = [cli, "message", "send", "--to", to, "--subject", subject]
+    # 官方要求 --body-file 为「相对当前目录」的路径。
+    # 做法：在项目目录落一个临时文件 → 传相对名 → 发送后立即删除。
+    # 不放在系统临时目录是因为那样无法用相对路径引用。
+    workdir = os.getcwd()
+    rel_path = None
+    tmp_abs = None
     try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".html", encoding="utf-8",
+            dir=workdir, prefix=".agently-body-", delete=False,
+        ) as fh:
+            fh.write(html_body)
+            tmp_abs = fh.name
+            rel_path = os.path.relpath(tmp_abs, workdir)
+
+        cmd = [
+            cli, "message", "+send",
+            "--to", to,
+            "--subject", subject,
+            "--body-file", rel_path,
+            "--body-format", "html",
+            "--confirmed",          # 非交互环境必须，否则挂起等待确认输入
+        ]
         proc = subprocess.run(
-            cmd, input=html_body, text=True,
-            capture_output=True, timeout=60,
+            cmd, cwd=workdir, text=True, capture_output=True, timeout=90,
         )
     except subprocess.TimeoutExpired:
-        return PushResult(False, "Agent Mail 发送超时", "agent-mail", to)
+        return PushResult(False, "Agent Mail 发送超时（90s）", "agent-mail", to)
     except Exception as exc:
         return PushResult(False, f"Agent Mail 调用失败：{type(exc).__name__}",
                           "agent-mail", to)
+    finally:
+        # 用绝对路径删除，更可靠（不依赖 cwd 是否被外部改变）
+        if tmp_abs:
+            try:
+                os.unlink(tmp_abs)
+            except OSError:
+                pass
 
+    stdout = (proc.stdout or "").strip()
     if proc.returncode == 0:
         return PushResult(True, f"已通过 Agent Mail 发送至 {to}", "agent-mail", to)
-    detail = (proc.stderr or proc.stdout or "").strip()[:160]
-    return PushResult(False, f"Agent Mail 返回错误：{detail}", "agent-mail", to)
+
+    # 未登录是常见情形，给出明确指引而不是只报错码
+    detail = stdout or (proc.stderr or "").strip()
+    if "authorization required" in detail or "auth" in detail.lower():
+        return PushResult(
+            False,
+            "Agent Mail 未登录。请先执行 `agently-cli auth login` 完成扫码授权",
+            "agent-mail", to)
+    return PushResult(False, f"Agent Mail 返回错误：{detail[:200]}",
+                      "agent-mail", to)
 
 
 # --------------------------------------------------------------------------
@@ -200,11 +322,6 @@ def push(to: str, subject: str, html_body: str,
     但用户不该因此收不到提醒。
     """
     channel = channel or _get("MAIL_CHANNEL", "auto")
-    to = to or _get("RADAR_TO") or _get("SMTP_USER")
-
-    # 先校验收件地址：没有地址就不必跑通道，避免无谓的连接尝试
-    if not to:
-        return PushResult(False, "未配置收件地址：请设置 RADAR_TO 或 SMTP_USER")
 
     order = {
         "agent": ["agent"],
@@ -215,7 +332,12 @@ def push(to: str, subject: str, html_body: str,
     notes: list[str] = []
     for name in order:
         if name == "agent":
-            res = push_via_agent(to, subject, html_body, text_body)
+            # Agent Mail 通道可自动解析收件地址，用户无需配置
+            target = to or _get("RADAR_TO") or agent_mail_address()
+            if not target:
+                notes.append("[agent] 无法确定收件地址（CLI 未登录且未配置 RADAR_TO）")
+                continue
+            res = push_via_agent(target, subject, html_body, text_body)
         else:
             res = send_via_smtp(subject, html_body, text_body)
         if res.ok:

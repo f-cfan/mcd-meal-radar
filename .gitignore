@@ -30,3 +30,6 @@ Thumbs.db
 out/
 logs/
 data/
+
+# Agent Mail 临时正文文件（正常会被自动清理，此处防御性忽略）
+.agently-body-*

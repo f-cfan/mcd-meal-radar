@@ -50,17 +50,27 @@ shasum -a 256 CONTEST_DECLARATION.md
 
 ```bash
 python demo.py            # 应输出四条链路且无异常
-python tests/test_all.py  # 应输出 Ran 23 tests ... OK
-python scheduler.py --fixture --all   # 四档任务应全部完成
+python tests/test_all.py  # 应输出 Ran 52 tests ... OK
+python scheduler.py --fixture --all    # 四档离线任务
+python scheduler.py --live --now lunch --send   # 真实链路 + 真实发送
 ```
 
-当前状态：
+### 实测状态（2026-10-16）
 
-```
-demo.py          四条链路全部跑通
-tests            23 passed
-scheduler --fixture --all    四档完成，生成 out/*.html
-```
+| 项 | 结果 |
+|---|---|
+| demo.py 四条链路 | ✅ 全通（零依赖、零 Token、不联网） |
+| 单元测试 | ✅ **52 passed** |
+| 真实 MCP 链路 | ✅ 门店 / 菜单 77 项 / 计价 / 营养 / 活动 / 积分 |
+| Agent Mail 发送 | ✅ 实发成功，收件箱可确认 |
+| Token 安全 | ✅ 仅在 `.env`，仓库无泄露 |
+| 声明文件 | ✅ SHA256 与官方一致 |
+
+### 真实发送验证记录
+
+- Agent Mail 地址：`chaofan2004@agent.qq.com`
+- 已通过项目自身的 `push()` 完成端到端发送（非手工命令）
+- 额度：每天 50 封 / 每分钟 10 次 → 四档任务（每天 4 封）安全
 
 ---
 

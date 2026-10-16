@@ -98,7 +98,8 @@ def run_slot(
     import os
     os.makedirs(outdir, exist_ok=True)
 
-    # 1) 抓数据
+    # 1) 抓数据（外送场景的 address_id 由 collector 按 MCD_ADDRESS_ID /
+    #    MCD_ADDRESS_PICK 解析，见 _pick_address 的注释）
     snap = get_snapshot(mode=mode, scene="delivery", auto_claim=slot.auto_claim)
 
     token_dead = mode == "live" and snap.degraded and "Token" in (snap.degrade_reason or "")
@@ -206,6 +207,17 @@ def main() -> int:
             continue
 
         flag = "（降级）" if res["degraded"] else ""
+
+        # 菜单为 0 是「静默失败」的高发点，必须显式诊断
+        if res["menu_items"] == 0:
+            hint = ""
+            if mode == "live":
+                hint = ("  ← 外送场景需配送地址：请设置 MCD_ADDRESS_ID，"
+                        "或设 MCD_ADDRESS_PICK=first 让程序从地址簿取第一项")
+            print(f"[{slot.label}] ⚠️ 菜单 0 项 —— 未取到门店菜单{hint}")
+            if res["degraded"]:
+                print(f"    降级原因：{res['degrade_reason']}")
+            continue
         sent = ""
         if args.send:
             if res["sent"]:

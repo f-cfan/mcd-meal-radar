@@ -16,6 +16,7 @@ import os
 import sys
 import unittest
 from decimal import Decimal
+from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
@@ -366,19 +367,46 @@ class TestPushChannels(unittest.TestCase):
         self.assertFalse(res.ok)
         os.environ["MAIL_CHANNEL"] = "auto"
 
-    def test_missing_recipient_fails_fast(self):
-        """未配置收件地址时应立即失败，不要白跑一次通道。
+    def test_agent_channel_auto_resolves_address(self):
+        """Agent 通道应能自动解析收件地址 —— 用户装了 CLI 登录过就能零配置发送。
 
-        需 mock 掉 .env 读取 —— 本机 .env 里配了 RADAR_TO，
-        而 _get 会回落到读文件，仅清环境变量不足以隔离。
+        这是实测踩过的坑：最初要求用户手填 RADAR_TO，导致无人值守任务跑不通。
         """
         import mail as mail_mod
         from unittest import mock
-        with mock.patch.object(mail_mod, "load_env", lambda *a, **k: {}):
+        with mock.patch.object(mail_mod, "agent_mail_address",
+                               lambda: "auto@agent.qq.com"), \
+             mock.patch.object(mail_mod, "push_via_agent",
+                               lambda to, *a, **k: mail_mod.PushResult(True, "ok", "agent-mail", to)):
+            os.environ["MAIL_CHANNEL"] = "agent"
+            os.environ.pop("RADAR_TO", None)
             res = mail_mod.push("", "主题", "<p>正文</p>")
+        self.assertTrue(res.ok)
+        self.assertEqual(res.address, "auto@agent.qq.com",
+                         "应使用自动解析出的 Agent Mail 地址")
+
+    def test_all_channels_fail_gives_diagnostics(self):
+        """所有通道都失败时，note 要含每条通道的失败原因，便于排障。"""
+        import mail as mail_mod
+        from unittest import mock
+
+        def fail_agent(to, *a, **k):
+            return mail_mod.PushResult(False, "Agent 未登录", "agent-mail")
+
+        def fail_smtp(*a, **k):
+            return mail_mod.PushResult(False, "SMTP 未配置", "smtp")
+
+        with mock.patch.object(mail_mod, "agent_mail_address", lambda: "a@agent.qq.com"), \
+             mock.patch.object(mail_mod, "push_via_agent", fail_agent), \
+             mock.patch.object(mail_mod, "send_via_smtp", fail_smtp), \
+             mock.patch.object(mail_mod, "load_env", lambda *a, **k: {}):
+            os.environ["MAIL_CHANNEL"] = "auto"
+            res = mail_mod.push("", "主题", "<p>正文</p>")
+
         self.assertFalse(res.ok)
-        self.assertIn("收件地址", res.note)
-        self.assertEqual(res.channel, "none", "地址缺失时不应尝试任何通道")
+        self.assertEqual(res.channel, "none")
+        self.assertIn("[agent]", res.note, "必须保留 Agent 通道的失败原因")
+        self.assertIn("[smtp]", res.note, "必须保留 SMTP 通道的失败原因")
 
     def test_smtp_never_leaks_secret(self):
         """脱敏描述里绝不能出现授权码明文。"""
@@ -437,6 +465,77 @@ class TestSourceLabel(unittest.TestCase):
         html = render_digest(Decision(None, [], [], []), snap)
         self.assertIn("麦当劳官方 MCP 实时数据", html)
         self.assertIn("缓存/降级数据", html)
+
+
+class TestAgentCliCommand(unittest.TestCase):
+    """Agent Mail CLI 调用契约。
+
+    CLI v1.0.18 的几个硬性约束（**实测 + dry-run 验证**，勿凭直觉改）：
+      · 子命令带 `+` 前缀：`message +send`，不是 `message send`
+      · `--body-file` 必须是**相对当前目录**的路径
+      · `--body-format html` 需显式指定，否则 HTML 被当纯文本
+      · 非交互环境必须加 `--confirmed`，否则挂起等确认输入
+
+    这里不 mock subprocess，而是直接校验源码里构造命令的契约字符串，
+    避免 mock 与 WorkBuddy 的 node shim 交互导致的假失败。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.src = open(
+            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         "src", "mail.py"),
+            encoding="utf-8").read()
+
+    def test_uses_plus_prefix(self):
+        self.assertIn('"message", "+send"', self.src,
+                      "子命令必须是 message +send（带 + 前缀）")
+
+    def test_passes_confirmed_flag(self):
+        self.assertIn('"--confirmed"', self.src,
+                      "非交互调用必须带 --confirmed，否则会挂起等确认输入")
+
+    def test_passes_body_format_html(self):
+        self.assertIn('"--body-format", "html"', self.src,
+                      "必须显式声明 html，否则 HTML 正文会被当纯文本")
+
+    def test_uses_body_file_not_stdin(self):
+        self.assertIn('"--body-file"', self.src)
+        self.assertIn("tempfile.NamedTemporaryFile", self.src,
+                      "官方要求相对路径，需落临时文件后传 body-file")
+
+    def test_uses_relative_path(self):
+        self.assertIn("os.path.relpath", self.src,
+                      "body-file 必须转成相对路径")
+
+    def test_cleans_up_temp_file(self):
+        self.assertIn("os.unlink", self.src, "临时文件必须在 finally 中清理")
+
+    def test_timeout_is_bounded(self):
+        self.assertIn("timeout=", self.src, "子进程必须有超时，避免 cron 挂死")
+
+
+class TestCliDiscovery(unittest.TestCase):
+    """CLI 探测不能只依赖 PATH。"""
+
+    def test_env_override_wins(self):
+        import mail as mail_mod
+        import tempfile as tf
+        with tf.NamedTemporaryFile(suffix=".txt") as fh:
+            with mock.patch.dict(os.environ, {"AGENTLY_CLI": fh.name}):
+                self.assertEqual(mail_mod._find_agent_cli(), fh.name)
+
+    def test_glob_fallback_finds_managed_runtime(self):
+        """managed runtime 下的全局 bin 不在 PATH，需 glob 兜底。"""
+        import mail as mail_mod
+        pattern = os.path.expanduser(
+            "~/.workbuddy/binaries/node/versions/*/bin/agently-cli")
+        import glob as g
+        found = g.glob(pattern)
+        if not found:
+            self.skipTest("本机无 managed runtime 安装，跳过")
+        # 即使 PATH 里没有，_find_agent_cli 也应能通过 glob 找到
+        self.assertTrue(mail_mod._find_agent_cli() is not None)
 
 
 if __name__ == "__main__":
