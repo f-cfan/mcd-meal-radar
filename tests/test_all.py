@@ -392,5 +392,52 @@ class TestPushChannels(unittest.TestCase):
         self.assertIn("已配置", desc)
 
 
+class TestSourceLabel(unittest.TestCase):
+    """数据来源标注 —— 曾出现真实数据被误标成演示数据的 bug。
+
+    根因是用 `not degraded` 反推来源，但真实抓取成功时 degraded 也是 False。
+    现在改为 Snapshot.source 显式标记，此测试锁定该行为。
+    """
+
+    def _snap(self, **kw):
+        from mcd_adapter import Snapshot
+        base = dict(fetched_at="2026-10-16 11:00:00", scene="delivery",
+                    store=None, menu=[], degraded=False)
+        base.update(kw)
+        return Snapshot(**base)
+
+    def test_live_data_not_labelled_as_demo(self):
+        """真实数据绝不能标成「fixtures 演示」。"""
+        from mailer import render_digest
+        from solver import Decision
+        snap = self._snap(source="live")
+        html = render_digest(Decision(None, [], [], []), snap)
+        self.assertIn("麦当劳官方 MCP 实时数据", html)
+        self.assertNotIn("fixtures 演示", html)
+
+    def test_fixture_data_labelled_as_demo(self):
+        """离线演示数据要如实标注。"""
+        from mailer import render_digest
+        from solver import Decision
+        html = render_digest(Decision(None, [], [], []), self._snap(source="fixture"))
+        self.assertIn("fixtures 演示数据", html)
+
+    def test_cache_data_labelled_as_cache(self):
+        """降级缓存要标明非实时。"""
+        from mailer import render_digest
+        from solver import Decision
+        html = render_digest(Decision(None, [], [], []), self._snap(source="cache"))
+        self.assertIn("缓存快照", html)
+
+    def test_degraded_alone_does_not_decide_source(self):
+        """degraded=True 但 source=live 时，标注仍应是实时（故障可见）。"""
+        from mailer import render_digest
+        from solver import Decision
+        snap = self._snap(source="live", degraded=True, degrade_reason="测试")
+        html = render_digest(Decision(None, [], [], []), snap)
+        self.assertIn("麦当劳官方 MCP 实时数据", html)
+        self.assertIn("缓存/降级数据", html)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

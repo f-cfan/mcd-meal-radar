@@ -157,6 +157,7 @@ def load_snapshot_from_fixtures(scene: str = "delivery") -> Snapshot:
     return Snapshot(
         fetched_at=menu_payload.get("_captured_at", _now_cst()),
         scene=scene,
+        source="fixture",
         store=primary_store,
         menu=menu,
         nutrition=parse_nutrition_list(load_fixture("nutrition", FIXTURE_DIR)),
@@ -182,7 +183,7 @@ def fetch_live_snapshot(client: McdMcpClient, scene: str = "delivery",
 
     Token 失效时抛 TokenExpired，由调用方降级。
     """
-    snap = Snapshot(fetched_at=_now_cst(), scene=scene, store=None)
+    snap = Snapshot(fetched_at=_now_cst(), scene=scene, store=None, source="live")
     be_type = 2 if scene in ("delivery", "group") else None  # 实测：2=麦乐送，6=团餐
 
     # 门店 —— 实测：beType 必填；data 是数组
@@ -277,6 +278,7 @@ def load_cached_snapshot() -> Snapshot | None:
                     be_code=store.get("be_code")) if store else None,
         menu=menu, my_coupons=coupons,
         points=raw.get("points"), campaign_names=raw.get("campaign_names", []),
+        source="cache",
         degraded=True,
         degrade_reason=f"缓存快照（抓取于 {raw.get('cached_at', '未知')}）",
     )
@@ -314,10 +316,12 @@ def get_snapshot(mode: str = "fixture", scene: str = "delivery",
         if cached:
             return cached
         return Snapshot(fetched_at=_now_cst(), scene=scene, store=None,
-                        degraded=True, degrade_reason=f"MCP Token 失效：{exc}")
+                        source="live", degraded=True,
+                        degrade_reason=f"MCP Token 失效：{exc}")
     except MCPError as exc:
         cached = load_cached_snapshot()
         if cached:
             return cached
         return Snapshot(fetched_at=_now_cst(), scene=scene, store=None,
-                        degraded=True, degrade_reason=f"MCP 调用失败：{exc}")
+                        source="live", degraded=True,
+                        degrade_reason=f"MCP 调用失败：{exc}")

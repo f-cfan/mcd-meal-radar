@@ -165,7 +165,14 @@ def render_digest(
         bits.append(f"活动：{'、'.join(snapshot.campaign_names[:2])}")
     info_html = " · ".join(_e(b) for b in bits)
 
-    meta = f"数据来源：{'本地 fixtures 演示' if snapshot.fetched_at and not snapshot.degraded else snapshot.degrade_reason or snapshot.fetched_at}"
+    # 数据来源必须显式区分，不能用 degraded 反推：
+    # 真实抓取成功时 degraded 也是 False，反推会把真实数据误标成演示数据。
+    _src_label = {
+        "live": "麦当劳官方 MCP 实时数据",
+        "fixture": "本地 fixtures 演示数据",
+        "cache": "本地缓存快照（非实时）",
+    }.get(getattr(snapshot, "source", "live"), "未知来源")
+    meta = f"数据来源：{_src_label} · 抓取于 {snapshot.fetched_at}"
     degrade_banner = ""
     if snapshot.degraded:
         degrade_banner = f"""

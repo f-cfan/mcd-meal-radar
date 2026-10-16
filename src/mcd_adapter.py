@@ -177,7 +177,12 @@ class Store:
 
 @dataclass
 class Snapshot:
-    """一次「抓取」的完整结果。定时任务拿它去喂约束求解器。"""
+    """一次「抓取」的完整结果。定时任务拿它去喂约束求解器。
+
+    source 是**显式**的数据来源标记（"live" / "fixture" / "cache"）——
+    不能用 degraded 反推，因为真实抓取成功时 degraded 也是 False。
+    早前版本正是在这里出错：真实数据被误标成「本地 fixtures 演示」。
+    """
 
     fetched_at: str
     scene: str
@@ -190,6 +195,7 @@ class Snapshot:
     campaign_names: list[str] = field(default_factory=list)
     degraded: bool = False
     degrade_reason: str | None = None
+    source: str = "live"
 
 
 # --------------------------------------------------------------------------
