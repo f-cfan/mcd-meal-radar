@@ -16,6 +16,7 @@ import os
 import re
 import sys
 import unittest
+from datetime import datetime
 from decimal import Decimal
 from unittest import mock
 
@@ -2016,6 +2017,140 @@ class TestDeliveryFeeWarning(unittest.TestCase):
         out = attach_quoted_prices(cands, table, breakdowns=bds)
         self.assertTrue(any("到店自取" in w for w in out[0].warnings),
                         f"真实流程里应出现配送费预警，实际 warnings={out[0].warnings}")
+
+
+class TestTasteRotation(unittest.TestCase):
+    """口味轮换 —— 避免「复读机效应」。
+
+    动机：常点商品底分 +50，若无冷却，一天四档任务会
+    周一中午、周一下午、周二中午… 永远推同一份。
+    用户看三天就会把邮件拖进垃圾箱 —— 这是体验层面的隐伤。
+    """
+
+    def _menu(self):
+        from mcd_adapter import MenuItem, Money
+        from decimal import Decimal as D
+        m = Money(D("39"))
+        return [
+            MenuItem("A", "常点的龙焰鸡腿堡四件套", "套餐", (), m, m),
+            MenuItem("B", "蘸蘸炸鸡", "小食", (),
+                     Money(D("19.7")), Money(D("19.7"))),
+            MenuItem("C", "四拼小食餐", "小食", (),
+                     Money(D("29")), Money(D("29"))),
+        ]
+
+    def _cands(self):
+        from solver import apply_preference, TasteProfile
+        return apply_preference(self._menu(),
+                                TasteProfile(top_codes=("A",), order_count=5))
+
+    def _best(self, cands):
+        alive = sorted([c for c in cands if not c.rejected_by],
+                       key=lambda c: c.score, reverse=True)
+        return alive[0].items[0].name
+
+    def _hist(self, *pairs, now=None):
+        from datetime import timedelta
+        now = now or datetime(2026, 10, 16, 12, 0)
+        return [{"code": c, "at": (now - timedelta(hours=h)).isoformat()}
+                for c, h in pairs]
+
+    def test_first_push_prefers_favorite(self):
+        """无历史时应推常点的。"""
+        from solver import apply_rotation
+        self.assertEqual(self._best(apply_rotation(self._cands(), [], None)),
+                         "常点的龙焰鸡腿堡四件套")
+
+    def test_rotates_after_recent_push(self):
+        """🔴 核心：24 小时内推过的应让位。"""
+        from solver import apply_rotation
+        now = datetime(2026, 10, 16, 12, 0)
+        out = apply_rotation(self._cands(), self._hist(("A", 2), now=now), now)
+        self.assertEqual(self._best(out), "蘸蘸炸鸡",
+                         "刚推过的常点应被降权，让位给次优")
+
+    def test_rotates_further_when_two_pushed(self):
+        """推过两个时应轮到第三个。"""
+        from solver import apply_rotation
+        now = datetime(2026, 10, 16, 12, 0)
+        out = apply_rotation(self._cands(),
+                             self._hist(("A", 2), ("B", 1), now=now), now)
+        self.assertEqual(self._best(out), "四拼小食餐")
+
+    def test_cooldown_expires_after_24h(self):
+        """超过 24 小时应恢复常点优先 —— 冷却不是永久的。"""
+        from solver import apply_rotation
+        now = datetime(2026, 10, 16, 12, 0)
+        out = apply_rotation(self._cands(), self._hist(("A", 30), now=now), now)
+        self.assertEqual(self._best(out), "常点的龙焰鸡腿堡四件套")
+
+    def test_penalty_must_exceed_favorite_bonus(self):
+        """🔴 惩罚值必须大于常点加分，否则轮换形同虚设。
+
+        早期用 -25 而常点是 +50，实测降权后仍稳居第一 ——
+        方法写对了但没实际效果，这类「假实现」必须用测试拦住。
+        """
+        from solver import COOLDOWN_PENALTY, TasteProfile
+        self.assertGreater(COOLDOWN_PENALTY,
+                           __import__("decimal").Decimal("50"),
+                           "惩罚值必须超过常点加分（50），否则轮换无效")
+
+    def test_warning_explains_rotation(self):
+        """轮换发生时要说清楚原因，不能静默换掉。"""
+        from solver import apply_rotation
+        now = datetime(2026, 10, 16, 12, 0)
+        out = apply_rotation(self._cands(), self._hist(("A", 2), now=now), now)
+        warned = [w for c in out for w in c.warnings if "轮换" in w]
+        self.assertTrue(warned, "应提示本轮做了口味轮换")
+        self.assertIn("24 小时", warned[0])
+
+    def test_corrupt_history_is_tolerated(self):
+        """历史文件损坏不应让主流程崩溃。"""
+        import tempfile, os
+        from solver import load_rotation
+        with tempfile.NamedTemporaryFile("w", suffix=".json",
+                                         delete=False, encoding="utf-8") as f:
+            f.write("{ 坏掉的 json")
+            path = f.name
+        try:
+            self.assertEqual(load_rotation(path), [])
+        finally:
+            os.unlink(path)
+
+    def test_bad_timestamp_does_not_crash(self):
+        """时间戳格式异常应跳过而非抛异常。"""
+        from solver import apply_rotation
+        now = datetime(2026, 10, 16, 12, 0)
+        out = apply_rotation(self._cands(),
+                             [{"code": "A", "at": "不是时间戳"}], now)
+        self.assertTrue(out, "坏记录应被忽略，不影响处理")
+
+    def test_only_recent_memory_is_kept(self):
+        """只保留最近 ROTATION_MEMORY 条 —— 否则文件会无限增长。"""
+        import tempfile, os
+        from solver import record_push, load_rotation, ROTATION_MEMORY
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "rotation.json")
+            for i in range(ROTATION_MEMORY + 3):
+                record_push(f"C{i}", datetime(2026, 10, 16, 12, i), path)
+            entries = load_rotation(path)
+            self.assertEqual(len(entries), ROTATION_MEMORY)
+            self.assertEqual(entries[-1]["code"],
+                             f"C{ROTATION_MEMORY + 2}",
+                             "应保留最近的记录")
+
+    def test_recorded_entry_round_trips(self):
+        """record_push 写入的记录应能被 load_rotation 读回。"""
+        import tempfile, os
+        from solver import record_push, load_rotation
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "rotation.json")
+            stamp = datetime(2026, 10, 16, 11, 30, 0)
+            record_push("CODE1", stamp, path)
+            got = load_rotation(path)
+            self.assertEqual(len(got), 1)
+            self.assertEqual(got[0]["code"], "CODE1")
+            self.assertEqual(got[0]["at"], stamp.isoformat())
 
 
 if __name__ == "__main__":

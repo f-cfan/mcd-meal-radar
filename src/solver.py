@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, field
+from datetime import datetime
 from decimal import Decimal
 from typing import Iterable, Literal
 
@@ -599,6 +600,8 @@ def solve(snapshot: Snapshot, profile: TasteProfile, policy: DietaryPolicy,
     cands = apply_nutrition(cands, snapshot.nutrition, policy)
     cands = apply_campaign(cands, snapshot)
     cands = apply_budget(cands, policy)
+    # 口味轮换放在最后：前几层筛完后，只对真正有机会当选的候选降权
+    cands = apply_rotation(cands)
 
     alive = [c for c in cands if c.rejected_by is None]
     # 已核价的候选优先展示 —— 给用户可执行的金额
@@ -628,3 +631,111 @@ def load_profile(path: str) -> TasteProfile:
         favorite_store_code=raw.get("favorite_store_code"),
         order_count=int(raw.get("order_count", 0)),
     )
+
+
+# --------------------------------------------------------------------------
+# 口味轮换：避免「复读机效应」
+# --------------------------------------------------------------------------
+
+# 冷却衰减分。24 小时内推过的餐品降权，让位给次优选项。
+#
+# ⚠️ 取值说明：常点商品底分是 +50，若惩罚太小（如 -25），
+# 轮换形同虚设 —— 实测降权后它仍稳居第一，等于没轮换。
+# 这里取 -55，略高于常点加分，使「今天推过了」优先于「你爱吃」，
+# 但**不排除它**（若无其他候选或它明显更优，仍会回到第一）。
+COOLDOWN_PENALTY = Decimal("55")
+# 记录最近多少次推送
+ROTATION_MEMORY = 3
+# 冷却有效期（小时）
+COOLDOWN_HOURS = 24
+
+
+def load_rotation(path: str = "data/rotation.json") -> list[dict]:
+    """读取最近推送记录。每条形如 {"code": "...", "at": "2026-10-16T11:00:00"}。"""
+    import json
+    import os
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, list) else []
+    except (ValueError, OSError):
+        return []
+
+
+def save_rotation(entries: list[dict],
+                  path: str = "data/rotation.json") -> None:
+    """追加一条推送记录，只保留最近 ROTATION_MEMORY 条。"""
+    import json
+    import os
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(entries[-ROTATION_MEMORY:], fh,
+                      ensure_ascii=False, indent=2)
+    except OSError:
+        pass          # 轮换记录写不进去不该影响主流程
+
+
+def apply_rotation(candidates: list[Candidate],
+                   history: list[dict] | None = None,
+                   now: datetime | None = None,
+                   penalty: Decimal = COOLDOWN_PENALTY) -> list[Candidate]:
+    """给 24 小时内推过的餐品降权，避免天天复读同一份。
+
+    ⚠️ 动机：常点商品底分 +50，若无冷却，一天四档任务会
+    周一中午、周一下午、周二中午… 永远推同一份。
+    用户看三天就会把邮件拖进垃圾箱 —— 这是**体验层面的隐伤**。
+
+    降权后若它仍排第一，说明确实最优，保留；
+    只有当别的选项分数更高时才发生轮换。
+
+    冷却窗口内的记录会被清理（超过 24 小时自动失效）。
+    """
+    history = history if history is not None else load_rotation()
+    if not history:
+        return candidates
+
+    now = now or datetime.now()
+    # 支持带时区与不带时区两种记录
+    fresh: set[str] = set()
+    for h in history:
+        code = h.get("code")
+        at = h.get("at")
+        if not code or not at:
+            continue
+        try:
+            t = datetime.fromisoformat(str(at))
+        except ValueError:
+            continue
+        if t.tzinfo is not None:
+            t = t.replace(tzinfo=None)
+        delta = now.replace(tzinfo=None) - t
+        if delta.total_seconds() <= COOLDOWN_HOURS * 3600:
+            fresh.add(code)
+
+    if not fresh:
+        return candidates
+
+    for c in candidates:
+        if c.rejected_by:
+            continue
+        hit_items = [i for i in c.items if i.code in fresh]
+        if not hit_items:
+            continue
+        c.score -= penalty
+        names = "、".join(i.name for i in hit_items)
+        c.warnings.append(
+            f"已为你轮换口味 —— 常点的「{names}」24 小时内推过，本轮暂放备选")
+    return candidates
+
+
+def record_push(code: str, now: datetime | None = None,
+                path: str = "data/rotation.json") -> None:
+    """记录本轮推送的餐品编码。"""
+    now = now or datetime.now()
+    stamp = now.replace(microsecond=0).isoformat()
+    entries = load_rotation(path)
+    entries.append({"code": code, "at": stamp})
+    save_rotation(entries, path)

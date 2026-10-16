@@ -43,7 +43,9 @@ from mailer import (  # noqa: E402
     render_digest, render_plain, render_token_expired,
 )
 from mcd_adapter import MCPError  # noqa: E402
-from solver import DietaryPolicy, Decision, TasteProfile, load_profile, solve  # noqa: E402
+from solver import (  # noqa: E402
+    DietaryPolicy, Decision, TasteProfile, load_profile, record_push, solve,
+)
 
 CST = timezone(timedelta(hours=8))
 
@@ -293,6 +295,13 @@ def run_slot(
         care = build_care_context(snap, slot, now=slot_dt)
         html = render_digest(decision, snap, profile_text, slot.label, care=care)
         text = render_plain(decision, snap, slot.label, care=care)
+
+        # 记录本轮首选，供下一档做口味轮换（避免天天复读同一份）
+        if decision.best and decision.best.items:
+            try:
+                record_push(decision.best.items[0].code)
+            except Exception:
+                pass
 
     # 4) 落盘（便于离线预览与调试）
     safe = slot.key
